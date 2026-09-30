@@ -16,7 +16,7 @@ The guiding rule is: **discover a native balanced-ternary architecture instead o
 ## Phase 2 — Trit model
 - [x] Logical values `-1`, `0`, `+1`
 - [x] Trit normalization/validation helper
-- [ ] Separate `unknown/unconnected` state from logical zero
+- [x] Separate `unknown/unconnected` state from logical zero
 - [x] Signal changes propagate through the circuit
 - [x] Logical values are independent of UI rendering
 - [ ] Configurable physical voltage mapping, e.g. `-1=0V`, `0=1.65V`, `+1=3.3V`
@@ -29,7 +29,7 @@ The guiding rule is: **discover a native balanced-ternary architecture instead o
 - [x] Fan-out: one output can drive multiple inputs
 - [x] Reject invalid port direction / missing components
 - [x] One driver per input; a new wire replaces the old input connection
-- [ ] Explicit graph-level combinational-loop detection
+- [x] Explicit graph-level combinational-loop detection
 - [x] Runtime protection against non-settling propagation
 
 ## Phase 4 — Simulation engine
@@ -95,7 +95,7 @@ The guiding rule is: **discover a native balanced-ternary architecture instead o
 - [x] Inspect queued events
 
 ## Phase 8 — Hierarchical/custom components
-- [ ] Select an existing subcircuit and create a component directly (depends on multi-select)
+- [x] Select an existing subcircuit and create a component directly (depends on multi-select)
 - [x] Create a new reusable component circuit
 - [x] Define external input/output ports with Component Input / Component Output blocks
 - [x] Rename external ports in Inspector
@@ -106,21 +106,23 @@ The guiding rule is: **discover a native balanced-ternary architecture instead o
 - [x] Custom components may contain other custom components
 - [x] Recursive multi-level drill-down works for combinational components
 - [x] Custom block behavior is evaluated from its internal circuit rather than a hard-coded shortcut
-- [ ] Detect indirect custom-component recursion cycles (A -> B -> A)
+- [x] Detect indirect custom-component recursion cycles (A -> B -> A)
 - [ ] Preserve stateful internal runtime per instance for sequential components (Phase 15)
 
 ## Phase 9 — Persistence and project format
 - [x] IndexedDB project storage
 - [x] Save/load project
+- [x] Autosave changed projects to IndexedDB
+- [x] Automatically reopen the last active project on startup
 - [x] Circuit data separated from Pixi objects
 - [x] Versioned circuit serialization format
-- [ ] Named multiple projects
+- [x] Named multiple projects
 - [x] Reusable custom-component library stored with the project
-- [ ] Primitive-set storage
-- [ ] Test-suite storage
-- [ ] Export JSON file
-- [ ] Import JSON file
-- [ ] Migration strategy between future file-format versions
+- [x] Primitive-set storage
+- [x] Test-suite storage
+- [x] Export JSON file
+- [x] Import JSON file
+- [x] Migration strategy between future file-format versions
 
 ## Phase 10 — Component test system
 - [ ] Define input/output contract
@@ -222,8 +224,8 @@ The guiding rule is: **discover a native balanced-ternary architecture instead o
 - [x] Set each external input to -1 / 0 / +1
 - [x] Show external outputs live
 - [x] Test nested reusable components through the real circuit evaluator
-- [ ] Save named component test cases
-- [ ] Exhaustive truth-table runner
+- [x] Save named component test cases
+- [x] Exhaustive truth-table runner
 
 
 ## v10 additions

@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  const { Circuit, registry, makeCustomDefinition, boundaryPorts, slug, clone, normalizeSequence } = window.TernaryCore;
+  const { Circuit, registry, makeCustomDefinition, boundaryPorts, slug, clone, normalizeSequence, trit } = window.TernaryCore;
   const { ProjectStorage } = window.TernaryStorage;
   const { CircuitRenderer } = window.TernaryRenderer;
 
@@ -24,6 +24,12 @@
     arithmetic: { label: 'Arithmetic core', description: 'Small set focused on balanced-ternary arithmetic experiments.', types: ['negate', 'compare', 'normalize-carry'], metadata: { purpose: 'arithmetic', logicalCostModel: 'sum primitive node costs', physicalCostModel: 'unmodeled until hardware implementation is chosen' } },
   };
   const primitiveExperiment = { activeId: 'all', customTypes: new Set(EXPERIMENTAL_PRIMITIVES) };
+  const PROJECT_FORMAT_VERSION = 6;
+  let currentProjectId = null;
+  let currentProjectName = 'Project 1';
+  let testSuites = [];
+  let lastSavedSnapshot = '';
+  let autosaveTimer = null;
 
   const history = { undo: [], redo: [], pending: null, restoring: false };
 
@@ -56,9 +62,12 @@
   const primitiveSetDescription = $('primitiveSetDescription');
   const primitiveSetChecks = $('primitiveSetChecks');
   const primitiveSetCost = $('primitiveSetCost');
+  const projectSelect = $('projectSelect');
+  const projectNameInput = $('projectName');
+  const importFile = $('importFile');
 
   function circuit() { return current.circuit; }
-  function fmt(value) { value = Number(value) || 0; return value > 0 ? '+1' : String(value); }
+  function fmt(value) { value = trit(value); return value === null ? '?' : value > 0 ? '+1' : String(value); }
   function esc(value) { return String(value ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
   function setStatus(message, error = false) { statusEl.textContent = message; statusEl.classList.toggle('error', Boolean(error)); }
 
@@ -73,12 +82,12 @@
   function updateHistoryButtons() { undoBtn.disabled = !history.undo.length; redoBtn.disabled = !history.redo.length; }
   function resetHistory() { history.undo.length = 0; history.redo.length = 0; history.pending = null; updateHistoryButtons(); }
   function beginHistory(label) { if (!history.restoring) history.pending = { label, before: snapshotString() }; }
-  function commitHistory(label) {
+  function commitHistory(label, metadata = null) {
     if (history.restoring || !history.pending) return;
     const after = snapshotString();
     const entry = history.pending; history.pending = null;
     if (entry.before === after) return;
-    history.undo.push({ label: label || entry.label, before: entry.before, after });
+    history.undo.push({ label: label || entry.label, before: entry.before, after, metadata });
     if (history.undo.length > 100) history.undo.shift();
     history.redo.length = 0; updateHistoryButtons();
   }
@@ -87,8 +96,24 @@
     try { circuit().load(JSON.parse(serialized)); renderer.select(null); updateStats(); }
     finally { history.restoring = false; history.pending = null; }
   }
-  function undo() { const e = history.undo.pop(); if (!e) return; restoreSnapshot(e.before); history.redo.push(e); updateHistoryButtons(); setStatus(`Undo: ${e.label}.`); }
-  function redo() { const e = history.redo.pop(); if (!e) return; restoreSnapshot(e.after); history.undo.push(e); updateHistoryButtons(); setStatus(`Redo: ${e.label}.`); }
+  function undo() {
+    const e = history.undo.pop(); if (!e) return;
+    if (e.metadata?.addedCustom) {
+      customComponents.delete(e.metadata.addedCustom.id);
+      registry.remove(e.metadata.addedCustom.type);
+    }
+    restoreSnapshot(e.before); renderLibrary();
+    history.redo.push(e); updateHistoryButtons(); setStatus(`Undo: ${e.label}.`);
+  }
+  function redo() {
+    const e = history.redo.pop(); if (!e) return;
+    if (e.metadata?.addedCustom) {
+      customComponents.set(e.metadata.addedCustom.id, clone(e.metadata.addedCustom));
+      registerCustom(e.metadata.addedCustom);
+    }
+    restoreSnapshot(e.after); renderLibrary();
+    history.undo.push(e); updateHistoryButtons(); setStatus(`Redo: ${e.label}.`);
+  }
 
   function copySelection() {
     const ids = renderer.getSelectedComponentIds();
@@ -161,7 +186,8 @@
       inspectorEl.className = 'inspector';
       inspectorEl.innerHTML = `<p><strong>${selection.ids.length} components selected</strong></p>
         <p class="hint">Drag any selected block to move the whole selection. Copy/paste preserves wires between selected blocks.</p>
-        <div class="selection-actions"><button id="inspectorDeleteBtn" type="button">Delete selected blocks</button></div>`;
+        <div class="selection-actions"><button id="createComponentFromSelectionBtn" class="primary-action" type="button">Create component from selection</button><button id="inspectorDeleteBtn" type="button">Delete selected blocks</button></div>`;
+      $('createComponentFromSelectionBtn').addEventListener('click', createComponentFromSelection);
       $('inspectorDeleteBtn').addEventListener('click', () => renderer.deleteSelection());
       return;
     }
@@ -319,14 +345,15 @@
     $('inspectorDeleteBtn').addEventListener('click', () => renderer.deleteSelection());
     if (def.custom) $('openComponentBtn').addEventListener('click', () => openCustomComponent(def.type));
     if (def.boundary) $('renameBoundaryBtn').addEventListener('click', () => {
-      const name = $('boundaryName').value.trim();
-      if (!name) return setStatus('Port name cannot be empty.', true);
+      const requestedName = $('boundaryName').value.trim();
+      if (!requestedName) return setStatus('Port name cannot be empty.', true);
+      const name = uniqueBoundaryName(component.type, requestedName, component.id);
       beginHistory('Rename component port');
       circuit().setState(component.id, { name });
       commitHistory('Rename component port');
       updateInspector({ ...selection, item: circuit().components.get(component.id) });
       renderComponentTestPanel();
-      setStatus(`Port renamed to ${name}. Save/back will update the reusable component interface.`);
+      setStatus(`Port renamed to ${name}.${name !== requestedName ? ' A unique name was assigned.' : ''} Save/back will update the reusable component interface.`);
     });
   }
 
@@ -337,18 +364,230 @@
     button.dataset.type = type;
     button.innerHTML = `<strong>${title}${candidate ? '<em class="candidate-badge">CANDIDATE</em>' : ''}</strong><span>${subtitle}</span>`;
     button.addEventListener('click', () => {
-      renderer.addAtViewportCenter(type);
+      const initialState = uniqueBoundaryState(type);
+      const component = renderer.addAtViewportCenter(type, initialState || undefined);
       updateStats();
-      setStatus(`Added ${registry.get(type).label}.`);
+      setStatus(`Added ${registry.get(type).label}${initialState ? ` “${component.state.name}”` : ''}.`);
       renderer.app.canvas.focus();
     });
     container.appendChild(button);
+  }
+
+  function uniqueBoundaryName(type, preferred, excludeId = null) {
+    const fallback = type === 'component-input' ? 'in' : 'out';
+    const names = [...circuit().components.values()]
+      .filter((component) => component.type === type && component.id !== excludeId)
+      .map((component) => component.state?.name);
+    return uniqueName(preferred, names, fallback);
+  }
+
+  function uniqueBoundaryState(type) {
+    if (current.kind !== 'custom' || !['component-input', 'component-output'].includes(type)) return null;
+    const fallback = type === 'component-input' ? 'in' : 'out';
+    return { name: uniqueBoundaryName(type, fallback) };
   }
 
   function componentTestBoundaries() {
     if (current.kind !== 'custom') return { inputs: [], outputs: [] };
     try { return boundaryPorts(circuit().serialize()); }
     catch (_) { return { inputs: [], outputs: [] }; }
+  }
+
+  function componentTestSuite() {
+    if (current.kind !== 'custom') return null;
+    let suite = testSuites.find((entry) => entry.componentId === current.customId);
+    if (!suite) {
+      suite = { componentId: current.customId, cases: [] };
+      testSuites.push(suite);
+    }
+    if (!Array.isArray(suite.cases)) suite.cases = [];
+    return suite;
+  }
+
+  function uniqueName(preferred, existingNames, fallback = 'Untitled') {
+    const base = String(preferred || '').trim().replace(/\s+/g, ' ').slice(0, 80) || fallback;
+    const names = new Set(existingNames.map((name) => String(name || '').trim().toLocaleLowerCase()));
+    if (!names.has(base.toLocaleLowerCase())) return base;
+    let suffix = 2;
+    while (names.has(`${base} ${suffix}`.toLocaleLowerCase())) suffix += 1;
+    return `${base} ${suffix}`;
+  }
+
+  function testPortValues(boundaries) {
+    return {
+      inputs: Object.fromEntries(boundaries.inputs.map((port) => [port.componentId, trit(circuit().components.get(port.componentId)?.state?.value)])),
+      outputs: Object.fromEntries(boundaries.outputs.map((port) => [port.componentId, trit(circuit().components.get(port.componentId)?.state?.value)])),
+    };
+  }
+
+  function evaluateComponentTest(inputs, boundaries) {
+    const isolated = new Circuit(registry);
+    isolated.load(circuit().serialize());
+    for (const input of boundaries.inputs) {
+      if (!(input.componentId in inputs)) throw new Error(`Test input “${input.name}” no longer exists.`);
+      isolated.setState(input.componentId, { value: trit(inputs[input.componentId]) });
+    }
+    isolated.simulate();
+    return Object.fromEntries(boundaries.outputs.map((output) => [
+      output.componentId,
+      trit(isolated.components.get(output.componentId)?.state?.value),
+    ]));
+  }
+
+  function renderTestResults(title, content, modifier = '') {
+    const result = document.createElement('div');
+    result.className = `component-test-results ${modifier}`.trim();
+    const heading = document.createElement('h3');
+    heading.textContent = title;
+    result.appendChild(heading);
+    result.appendChild(content);
+    const previous = componentTestPanel.querySelector('.component-test-results');
+    if (previous) previous.replaceWith(result);
+    else componentTestPanel.appendChild(result);
+  }
+
+  function renderSavedTestCases(boundaries) {
+    const suite = componentTestSuite();
+    const group = document.createElement('div');
+    group.className = 'component-test-group component-test-cases';
+    group.innerHTML = '<h3>Saved cases</h3>';
+
+    const controls = document.createElement('div');
+    controls.className = 'component-test-actions';
+    const name = document.createElement('input');
+    name.type = 'text';
+    name.maxLength = 80;
+    name.placeholder = `Case ${(suite?.cases.length || 0) + 1}`;
+    name.setAttribute('aria-label', 'Test case name');
+    const save = document.createElement('button');
+    save.type = 'button';
+    save.textContent = 'Save current';
+    save.addEventListener('click', () => {
+      const activeSuite = componentTestSuite();
+      const values = testPortValues(boundaries);
+      const label = uniqueName(name.value, activeSuite.cases.map((testCase) => testCase.name), 'Case');
+      activeSuite.cases.push({ id: `test-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, name: label, inputs: values.inputs, expectedOutputs: values.outputs });
+      autosaveIfChanged();
+      renderComponentTestPanel();
+      setStatus(`Saved test case “${label}”.`);
+    });
+    const runSaved = document.createElement('button');
+    runSaved.type = 'button';
+    runSaved.textContent = 'Run saved';
+    runSaved.disabled = !suite?.cases.length;
+    runSaved.addEventListener('click', () => runSavedComponentTests(boundaries));
+    const exhaustive = document.createElement('button');
+    exhaustive.type = 'button';
+    exhaustive.textContent = 'Run all combinations';
+    exhaustive.disabled = boundaries.inputs.length > 6;
+    exhaustive.title = boundaries.inputs.length > 6 ? 'Exhaustive runs are limited to six inputs (729 combinations).' : '';
+    exhaustive.addEventListener('click', () => runExhaustiveTruthTable(boundaries));
+    controls.append(name, save, runSaved, exhaustive);
+    group.appendChild(controls);
+
+    if (!suite?.cases.length) {
+      const empty = document.createElement('div');
+      empty.className = 'component-test-empty';
+      empty.textContent = 'Save the current inputs and outputs as a named expected-result case.';
+      group.appendChild(empty);
+    } else {
+      const list = document.createElement('div');
+      list.className = 'component-test-case-list';
+      for (const testCase of suite.cases) {
+        const row = document.createElement('div');
+        row.className = 'component-test-case';
+        const summary = document.createElement('span');
+        summary.textContent = testCase.name || 'Unnamed case';
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'case-remove';
+        remove.textContent = 'Remove';
+        remove.addEventListener('click', () => {
+          suite.cases = suite.cases.filter((entry) => entry.id !== testCase.id);
+          autosaveIfChanged();
+          renderComponentTestPanel();
+          setStatus(`Removed test case “${testCase.name || 'Unnamed case'}”.`);
+        });
+        row.append(summary, remove);
+        list.appendChild(row);
+      }
+      group.appendChild(list);
+    }
+    componentTestPanel.appendChild(group);
+  }
+
+  function runSavedComponentTests(boundaries) {
+    const suite = componentTestSuite();
+    const list = document.createElement('div');
+    list.className = 'component-test-run-list';
+    let failures = 0;
+    for (const testCase of suite.cases) {
+      const row = document.createElement('div');
+      row.className = 'component-test-run';
+      try {
+        const actual = evaluateComponentTest(testCase.inputs || {}, boundaries);
+        const mismatches = boundaries.outputs.filter((port) => !(port.componentId in (testCase.expectedOutputs || {})) || actual[port.componentId] !== Number(testCase.expectedOutputs[port.componentId]));
+        if (mismatches.length) {
+          failures += 1;
+          row.classList.add('failed');
+          row.textContent = `${testCase.name || 'Unnamed case'} — failed: ${mismatches.map((port) => {
+            const expected = testCase.expectedOutputs?.[port.componentId];
+            return `${port.name} expected ${expected === undefined ? 'not recorded' : fmt(expected)}, got ${fmt(actual[port.componentId])}`;
+          }).join('; ')}`;
+        } else {
+          row.classList.add('passed');
+          row.textContent = `${testCase.name || 'Unnamed case'} — passed`;
+        }
+      } catch (error) {
+        failures += 1;
+        row.classList.add('failed');
+        row.textContent = `${testCase.name || 'Unnamed case'} — could not run: ${error.message}`;
+      }
+      list.appendChild(row);
+    }
+    renderTestResults(`Saved cases: ${suite.cases.length - failures}/${suite.cases.length} passed`, list, failures ? 'has-failures' : 'all-passed');
+    setStatus(failures ? `${failures} saved test case${failures === 1 ? '' : 's'} failed.` : `All ${suite.cases.length} saved test cases passed.`, Boolean(failures));
+  }
+
+  function runExhaustiveTruthTable(boundaries) {
+    const combinations = 3 ** boundaries.inputs.length;
+    if (boundaries.inputs.length > 6) return setStatus('Exhaustive tests are limited to six inputs (729 combinations).', true);
+    const table = document.createElement('table');
+    table.className = 'truth-table';
+    const head = document.createElement('thead');
+    const headingRow = document.createElement('tr');
+    for (const port of [...boundaries.inputs, ...boundaries.outputs]) {
+      const cell = document.createElement('th');
+      cell.textContent = port.name;
+      headingRow.appendChild(cell);
+    }
+    head.appendChild(headingRow);
+    table.appendChild(head);
+    const body = document.createElement('tbody');
+    for (let index = 0; index < combinations; index += 1) {
+      let remaining = index;
+      const inputs = {};
+      for (const input of boundaries.inputs) {
+        inputs[input.componentId] = [-1, 0, 1][remaining % 3];
+        remaining = Math.floor(remaining / 3);
+      }
+      const outputs = evaluateComponentTest(inputs, boundaries);
+      const row = document.createElement('tr');
+      for (const input of boundaries.inputs) {
+        const cell = document.createElement('td');
+        cell.textContent = fmt(inputs[input.componentId]);
+        row.appendChild(cell);
+      }
+      for (const output of boundaries.outputs) {
+        const cell = document.createElement('td');
+        cell.textContent = fmt(outputs[output.componentId]);
+        row.appendChild(cell);
+      }
+      body.appendChild(row);
+    }
+    table.appendChild(body);
+    renderTestResults(`Truth table — ${combinations} combination${combinations === 1 ? '' : 's'}`, table);
+    setStatus(`Ran all ${combinations} ternary input combinations.`);
   }
 
   function setComponentTestInput(componentId, value) {
@@ -383,7 +622,7 @@
         const row = document.createElement('div');
         row.className = 'component-test-row';
         const component = circuit().components.get(input.componentId);
-        const value = Number(component?.state?.value) || 0;
+        const value = trit(component?.state?.value);
         row.innerHTML = `<span class="component-test-name">${input.name}</span><span class="trit-choice"></span>`;
         const choices = row.querySelector('.trit-choice');
         for (const v of [-1, 0, 1]) {
@@ -408,12 +647,14 @@
         const row = document.createElement('div');
         row.className = 'component-test-row';
         const component = circuit().components.get(output.componentId);
-        const value = Number(component?.state?.value) || 0;
+        const value = trit(component?.state?.value);
         row.innerHTML = `<span class="component-test-name">${output.name}</span><span class="component-test-value" data-output-id="${output.componentId}">${fmt(value)}</span>`;
         group.appendChild(row);
       }
       componentTestPanel.appendChild(group);
     }
+
+    renderSavedTestCases(boundaries);
   }
 
   function refreshComponentTestPanel() {
@@ -422,7 +663,7 @@
     let structuralMismatch = false;
     for (const input of boundaries.inputs) {
       const component = circuit().components.get(input.componentId);
-      const value = Number(component?.state?.value) || 0;
+      const value = trit(component?.state?.value);
       const buttons = componentTestPanel.querySelectorAll(`button[data-value]`);
       // Update by row name below; if structure changed, rebuild instead.
       const row = [...componentTestPanel.querySelectorAll('.component-test-row')].find((r) => r.querySelector('.component-test-name')?.textContent === input.name);
@@ -434,7 +675,7 @@
       const component = circuit().components.get(output.componentId);
       const el = componentTestPanel.querySelector(`[data-output-id="${output.componentId}"]`);
       if (!el) return renderComponentTestPanel();
-      el.textContent = fmt(Number(component?.state?.value) || 0);
+      el.textContent = fmt(component?.state?.value);
     }
   }
 
@@ -518,10 +759,33 @@
     for (const meta of customComponents.values()) {
       if (current.kind === 'custom' && meta.id === current.customId) continue; // prevent direct self recursion
       const def = registry.get(meta.type);
-      addLibraryButton(customList, meta.type, meta.label, `${def.inputs.length} in · ${def.outputs.length} out`, true);
+      addCustomLibraryEntry(meta, `${def.inputs.length} in · ${def.outputs.length} out`);
       shown++;
     }
     customEmpty.hidden = shown > 0;
+  }
+
+  function addCustomLibraryEntry(meta, subtitle) {
+    const entry = document.createElement('div');
+    entry.className = 'custom-library-entry';
+    addLibraryButton(entry, meta.type, meta.label, subtitle, true);
+    const actions = document.createElement('div');
+    actions.className = 'custom-library-actions';
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'open-custom-component';
+    open.textContent = 'Open';
+    open.setAttribute('aria-label', `Open reusable component ${meta.label}`);
+    open.addEventListener('click', () => openCustomComponent(meta.type));
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'remove-custom-component';
+    remove.textContent = 'Remove';
+    remove.setAttribute('aria-label', `Remove reusable component ${meta.label}`);
+    remove.addEventListener('click', () => removeCustomComponent(meta.id));
+    actions.append(open, remove);
+    entry.appendChild(actions);
+    customList.appendChild(entry);
   }
 
   function renderBreadcrumbs() {
@@ -546,6 +810,68 @@
     return def;
   }
 
+  function customComponentUsages(meta) {
+    const usages = [];
+    const inspect = (owner, data) => {
+      const count = (data?.components || []).filter((component) => component.type === meta.type).length;
+      if (count) usages.push({ owner, count });
+    };
+    inspect('Project', current.kind === 'root' ? circuit().serialize() : rootCircuit.serialize());
+    for (const candidate of customComponents.values()) {
+      if (candidate.id === meta.id) continue;
+      inspect(candidate.label, current.kind === 'custom' && candidate.id === current.customId ? circuit().serialize() : candidate.circuit);
+    }
+    return usages;
+  }
+
+  function removeCustomComponent(id) {
+    const meta = customComponents.get(id);
+    if (!meta) return;
+    const usages = customComponentUsages(meta);
+    if (usages.length) {
+      const detail = usages.map((usage) => `${usage.owner} (${usage.count})`).join(', ');
+      return setStatus(`Cannot remove “${meta.label}”; it is still used by ${detail}.`, true);
+    }
+    if (!window.confirm(`Remove reusable component “${meta.label}”? This cannot be undone.`)) return;
+    customComponents.delete(id);
+    registry.remove(meta.type);
+    testSuites = testSuites.filter((suite) => suite.componentId !== id);
+    renderLibrary();
+    autosaveIfChanged();
+    setStatus(`Removed reusable component “${meta.label}”.`);
+  }
+
+  function customRecursionPath(candidateId = null, candidateCircuit = null, components = customComponents) {
+    const typeToId = new Map([...components.values()].map((meta) => [meta.type, meta.id]));
+    const dependencies = (id) => {
+      const data = id === candidateId ? candidateCircuit : components.get(id)?.circuit;
+      return [...new Set((data?.components || []).map((component) => typeToId.get(component.type)).filter(Boolean))];
+    };
+    const visiting = new Set();
+    const visited = new Set();
+    const path = [];
+    const visit = (id) => {
+      if (visiting.has(id)) return [...path, id];
+      if (visited.has(id)) return null;
+      visiting.add(id); path.push(id);
+      for (const dependency of dependencies(id)) {
+        const cycle = visit(dependency);
+        if (cycle) return cycle;
+      }
+      path.pop(); visiting.delete(id); visited.add(id);
+      return null;
+    };
+    for (const id of components.keys()) {
+      const cycle = visit(id);
+      if (cycle) return cycle;
+    }
+    return null;
+  }
+
+  function recursionMessage(path, components = customComponents) {
+    return path.map((id) => components.get(id)?.label || id).join(' → ');
+  }
+
   function saveCurrentCustomDefinition() {
     if (current.kind !== 'custom') return true;
     const meta = customComponents.get(current.customId);
@@ -554,6 +880,8 @@
     try {
       const boundaries = boundaryPorts(data);
       if (!boundaries.inputs.length && !boundaries.outputs.length) throw new Error('A reusable component needs at least one Component Input or Component Output.');
+      const cycle = customRecursionPath(current.customId, data);
+      if (cycle) throw new Error(`Custom component recursion is not allowed: ${recursionMessage(cycle)}.`);
       meta.circuit = clone(data);
       registerCustom(meta);
       renderLibrary();
@@ -575,8 +903,9 @@
   }
 
   function createCustomComponent() {
-    const label = window.prompt('Name the reusable component:', 'My Component');
-    if (!label?.trim()) return;
+    const requestedLabel = window.prompt('Name the reusable component:', 'My Component');
+    if (!requestedLabel?.trim()) return;
+    const label = uniqueName(requestedLabel, [...customComponents.values()].map((meta) => meta.label), 'My Component');
     const id = `${slug(label)}-${Date.now().toString(36)}`;
     const type = `custom:${id}`;
     const inner = new Circuit(registry);
@@ -587,7 +916,99 @@
     registerCustom(meta);
     navigation.push({ context: current, view: renderer.getViewState(), index: navigation.length });
     switchContext({ kind: 'custom', label: meta.label, circuit: inner, customId: id });
-    setStatus(`Editing reusable component “${meta.label}”. Connect Component Input/Output blocks to define its interface.`);
+    setStatus(`Editing reusable component “${meta.label}”.${label !== requestedLabel.trim() ? ' A unique name was assigned.' : ''} Connect Component Input/Output blocks to define its interface.`);
+  }
+
+  function createComponentFromSelection() {
+    const selectedIds = renderer.getSelectedComponentIds();
+    if (!selectedIds.length) return setStatus('Select one or more components first.', true);
+    const requestedLabel = window.prompt('Name the new reusable component:', 'New Component');
+    if (!requestedLabel?.trim()) return;
+
+    const parent = circuit();
+    const selected = selectedIds.map((id) => parent.components.get(id)).filter(Boolean);
+    const selectedSet = new Set(selected.map((component) => component.id));
+    if (!selected.length) return setStatus('The selected components no longer exist.', true);
+    const label = uniqueName(requestedLabel, [...customComponents.values()].map((meta) => meta.label), 'New Component');
+    const minX = Math.min(...selected.map((component) => component.x));
+    const minY = Math.min(...selected.map((component) => component.y));
+    const maxX = Math.max(...selected.map((component) => component.x));
+    const maxY = Math.max(...selected.map((component) => component.y));
+    const incoming = [...parent.wires.values()].filter((wire) => !selectedSet.has(wire.from.componentId) && selectedSet.has(wire.to.componentId));
+    const outgoing = [...parent.wires.values()].filter((wire) => selectedSet.has(wire.from.componentId) && !selectedSet.has(wire.to.componentId));
+    const internal = [...parent.wires.values()].filter((wire) => selectedSet.has(wire.from.componentId) && selectedSet.has(wire.to.componentId));
+    const inner = new Circuit(registry);
+    const idMap = new Map();
+    const parentSnapshot = parent.serialize();
+    let meta = null;
+
+    try {
+      for (const component of selected) {
+        const copy = inner.addComponent(component.type, component.x - minX, component.y - minY, clone(component.state));
+        idMap.set(component.id, copy.id);
+      }
+      for (const wire of internal) {
+        const copy = inner.connect(idMap.get(wire.from.componentId), wire.from.port, idMap.get(wire.to.componentId), wire.to.port);
+        if (wire.label) inner.setWireLabel(copy.id, wire.label);
+      }
+
+      const usedInputs = [];
+      const inputPorts = incoming.map((wire, index) => {
+        const target = parent.components.get(wire.to.componentId);
+        const targetLabel = target?.state?.label || registry.get(target?.type || 'component-output').label;
+        const name = uniqueName(`${slug(targetLabel)} ${wire.to.port}`, usedInputs, 'input');
+        usedInputs.push(name);
+        const boundary = inner.addComponent('component-input', -220, index * 70, { name });
+        inner.connect(boundary.id, 'out', idMap.get(wire.to.componentId), wire.to.port);
+        return { wire, name };
+      });
+
+      const usedOutputs = [];
+      const outputPorts = new Map();
+      for (const wire of outgoing) {
+        const key = `${wire.from.componentId}:${wire.from.port}`;
+        if (outputPorts.has(key)) { outputPorts.get(key).wires.push(wire); continue; }
+        const source = parent.components.get(wire.from.componentId);
+        const sourceLabel = source?.state?.label || registry.get(source?.type || 'component-input').label;
+        const name = uniqueName(`${slug(sourceLabel)} ${wire.from.port}`, usedOutputs, 'output');
+        usedOutputs.push(name);
+        const boundary = inner.addComponent('component-output', (maxX - minX) + 220, outputPorts.size * 70, { name });
+        inner.connect(idMap.get(wire.from.componentId), wire.from.port, boundary.id, 'in');
+        outputPorts.set(key, { wire, wires: [wire], name });
+      }
+
+      const id = `${slug(label)}-${Date.now().toString(36)}`;
+      meta = { id, type: `custom:${id}`, label, circuit: inner.serialize() };
+      customComponents.set(id, meta);
+      registerCustom(meta);
+
+      beginHistory('Create component from selection');
+      for (const component of selected) parent.removeComponent(component.id);
+      const instance = parent.addComponent(meta.type, Math.round((minX + maxX) / 2), Math.round((minY + maxY) / 2));
+      for (const port of inputPorts) {
+        const wire = parent.connect(port.wire.from.componentId, port.wire.from.port, instance.id, port.name);
+        if (port.wire.label) parent.setWireLabel(wire.id, port.wire.label);
+      }
+      for (const port of outputPorts.values()) {
+        for (const wire of port.wires) {
+          const replacement = parent.connect(instance.id, port.name, wire.to.componentId, wire.to.port);
+          if (wire.label) parent.setWireLabel(replacement.id, wire.label);
+        }
+      }
+      commitHistory('Create component from selection', { addedCustom: clone(meta) });
+      renderer.selectComponent(instance.id);
+      renderLibrary(); updateStats();
+      setStatus(`Created reusable component “${label}” from ${selected.length} selected block${selected.length === 1 ? '' : 's'}.`);
+    } catch (error) {
+      history.pending = null;
+      if (meta) {
+        customComponents.delete(meta.id);
+        registry.remove(meta.type);
+      }
+      parent.load(parentSnapshot);
+      renderer.select(null); renderLibrary(); updateStats();
+      setStatus(`Could not create component: ${error.message}`, true);
+    }
   }
 
   function openCustomComponent(type) {
@@ -629,20 +1050,83 @@
     }
   }
 
+  function sanitizeProjectName(name) {
+    return String(name || '').trim().replace(/\s+/g, ' ').slice(0, 80) || 'Untitled project';
+  }
+
+  function makeProjectId(name) {
+    const base = slug(sanitizeProjectName(name)) || 'project';
+    return `${base}-${Date.now().toString(36)}`;
+  }
+
+  function migrateProject(rawProject) {
+    const project = clone(rawProject || {});
+    const version = Number(project.formatVersion || project.appVersion || 1);
+    if (version > PROJECT_FORMAT_VERSION) {
+      throw new Error(`This project uses format version ${version}, but this app supports up to ${PROJECT_FORMAT_VERSION}.`);
+    }
+
+    // Historical files stored the main circuit as either rootCircuit or circuit.
+    if (!project.rootCircuit && project.circuit) project.rootCircuit = project.circuit;
+    if (!project.customComponents) project.customComponents = [];
+    if (!project.primitiveExperiment) {
+      project.primitiveExperiment = { activeId: 'all', customTypes: [...EXPERIMENTAL_PRIMITIVES] };
+    }
+    if (!project.testSuites) project.testSuites = [];
+    if (!project.projectName) project.projectName = 'Imported project';
+    project.formatVersion = PROJECT_FORMAT_VERSION;
+    project.appVersion = PROJECT_FORMAT_VERSION;
+    return project;
+  }
+
   function projectSnapshot() {
     saveCurrentCustomDefinition();
     return {
-      appVersion: 5,
+      formatVersion: PROJECT_FORMAT_VERSION,
+      appVersion: PROJECT_FORMAT_VERSION,
+      projectId: currentProjectId,
+      projectName: sanitizeProjectName(currentProjectName),
       primitiveExperiment: { activeId: primitiveExperiment.activeId, customTypes: [...primitiveExperiment.customTypes] },
       rootCircuit: rootCircuit.serialize(),
       customComponents: [...customComponents.values()].map(clone),
+      testSuites: clone(testSuites),
       view: current.kind === 'root' ? renderer.getViewState() : null,
     };
   }
 
-  async function saveProject() {
-    try { await storage.save('default', projectSnapshot()); setStatus('Project and reusable component library saved in IndexedDB.'); }
-    catch (error) { setStatus(`Save failed: ${error.message}`, true); }
+  async function refreshProjectList() {
+    const projects = await storage.list();
+    projectSelect.innerHTML = '';
+    for (const entry of projects) {
+      const option = document.createElement('option');
+      option.value = entry.id;
+      option.textContent = entry.project?.projectName || entry.id;
+      projectSelect.appendChild(option);
+    }
+    if (currentProjectId && !projects.some((entry) => entry.id === currentProjectId)) {
+      const option = document.createElement('option');
+      option.value = currentProjectId;
+      option.textContent = currentProjectName;
+      projectSelect.appendChild(option);
+    }
+    if (currentProjectId) projectSelect.value = currentProjectId;
+  }
+
+  async function saveProject({ quiet = false } = {}) {
+    try {
+      if (!currentProjectId) currentProjectId = makeProjectId(currentProjectName);
+      currentProjectName = sanitizeProjectName(projectNameInput.value || currentProjectName);
+      projectNameInput.value = currentProjectName;
+      const snapshot = projectSnapshot();
+      snapshot.projectId = currentProjectId;
+      snapshot.projectName = currentProjectName;
+      const serialized = JSON.stringify(snapshot);
+      await storage.save(currentProjectId, snapshot);
+      await storage.setMeta('lastProjectId', currentProjectId);
+      lastSavedSnapshot = serialized;
+      await refreshProjectList();
+      if (!quiet) setStatus(`Saved “${currentProjectName}” to IndexedDB.`);
+    } catch (error) { setStatus(`Save failed: ${error.message}`, true); }
   }
 
   function clearCustomRegistry() {
@@ -650,24 +1134,108 @@
     customComponents.clear();
   }
 
-  async function loadProject() {
+  function applyProject(project, { id = null, savedAt = null } = {}) {
+    project = migrateProject(project);
+    const incomingComponents = new Map((project.customComponents || []).map((meta) => [meta.id, clone(meta)]));
+    const cycle = customRecursionPath(null, null, incomingComponents);
+    if (cycle) throw new Error(`Custom component recursion is not allowed: ${recursionMessage(cycle, incomingComponents)}.`);
+    navigation.length = 0;
+    clearCustomRegistry();
+    for (const meta of incomingComponents.values()) customComponents.set(meta.id, meta);
+    for (const meta of customComponents.values()) registerCustom(meta);
+    const savedExperiment = project.primitiveExperiment || {};
+    primitiveExperiment.activeId = savedExperiment.activeId === 'custom' || PRIMITIVE_SETS[savedExperiment.activeId] ? (savedExperiment.activeId || 'all') : 'all';
+    primitiveExperiment.customTypes = new Set((savedExperiment.customTypes || EXPERIMENTAL_PRIMITIVES).filter((type) => EXPERIMENTAL_PRIMITIVES.includes(type)));
+    testSuites = clone(project.testSuites || []);
+    currentProjectId = id || project.projectId || makeProjectId(project.projectName);
+    currentProjectName = sanitizeProjectName(project.projectName || 'Project');
+    projectNameInput.value = currentProjectName;
+    renderPrimitiveSetControls(); renderLibrary();
+    rootCircuit = new Circuit(registry);
+    rootCircuit.load(project.rootCircuit || project.circuit);
+    switchContext({ kind: 'root', label: 'Project', circuit: rootCircuit, customId: null }, project.view);
+    resetHistory();
+    lastSavedSnapshot = JSON.stringify(projectSnapshot());
+    storage.setMeta('lastProjectId', currentProjectId).catch(() => {});
+    refreshProjectList().catch(() => {});
+    setStatus(savedAt ? `Loaded “${currentProjectName}” saved ${new Date(savedAt).toLocaleString()}.` : `Loaded “${currentProjectName}”.`);
+  }
+
+  async function loadProject(id = null) {
     try {
-      const saved = await storage.load('default');
+      const targetId = id || projectSelect.value || currentProjectId || 'default';
+      const saved = await storage.load(targetId);
       if (!saved) return setStatus('No saved project found.', true);
-      navigation.length = 0;
-      clearCustomRegistry();
-      const project = saved.project;
-      for (const meta of project.customComponents || []) { customComponents.set(meta.id, clone(meta)); }
-      for (const meta of customComponents.values()) registerCustom(meta);
-      const savedExperiment = project.primitiveExperiment || {};
-      primitiveExperiment.activeId = savedExperiment.activeId === 'custom' || PRIMITIVE_SETS[savedExperiment.activeId] ? (savedExperiment.activeId || 'all') : 'all';
-      primitiveExperiment.customTypes = new Set((savedExperiment.customTypes || EXPERIMENTAL_PRIMITIVES).filter((type) => EXPERIMENTAL_PRIMITIVES.includes(type)));
-      renderPrimitiveSetControls(); renderLibrary();
-      rootCircuit = new Circuit(registry);
-      rootCircuit.load(project.rootCircuit || project.circuit);
-      switchContext({ kind: 'root', label: 'Project', circuit: rootCircuit, customId: null }, project.view);
-      setStatus(`Loaded project saved ${new Date(saved.savedAt).toLocaleString()}.`);
+      applyProject(saved.project, { id: saved.id, savedAt: saved.savedAt });
     } catch (error) { setStatus(`Load failed: ${error.message}`, true); }
+  }
+
+  async function createNewProject() {
+    await saveProject({ quiet: true });
+    navigation.length = 0;
+    clearCustomRegistry();
+    rootCircuit = new Circuit(registry);
+    currentProjectName = 'New project';
+    currentProjectId = makeProjectId(currentProjectName);
+    projectNameInput.value = currentProjectName;
+    testSuites = [];
+    primitiveExperiment.activeId = 'all';
+    primitiveExperiment.customTypes = new Set(EXPERIMENTAL_PRIMITIVES);
+    renderPrimitiveSetControls(); renderLibrary();
+    switchContext({ kind: 'root', label: 'Project', circuit: rootCircuit, customId: null });
+    resetHistory();
+    lastSavedSnapshot = '';
+    await saveProject({ quiet: true });
+    setStatus('Created a new project. Rename it in the project-name field; changes autosave.');
+  }
+
+  function exportProject() {
+    try {
+      currentProjectName = sanitizeProjectName(projectNameInput.value || currentProjectName);
+      const snapshot = projectSnapshot();
+      snapshot.projectName = currentProjectName;
+      const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `${slug(currentProjectName) || 'ternary-project'}.ternary.json`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+      setStatus(`Exported “${currentProjectName}” as JSON.`);
+    } catch (error) { setStatus(`Export failed: ${error.message}`, true); }
+  }
+
+  async function importProjectFile(file) {
+    try {
+      const text = await file.text();
+      const imported = migrateProject(JSON.parse(text));
+      imported.projectName = sanitizeProjectName(imported.projectName || file.name.replace(/\.ternary\.json$|\.json$/i, '') || 'Imported project');
+      imported.projectId = makeProjectId(imported.projectName);
+      applyProject(imported, { id: imported.projectId });
+      await saveProject({ quiet: true });
+      setStatus(`Imported “${currentProjectName}” and saved it locally.`);
+    } catch (error) { setStatus(`Import failed: ${error.message}`, true); }
+    finally { importFile.value = ''; }
+  }
+
+  async function autosaveIfChanged() {
+    if (!renderer || !currentProjectId) return;
+    try {
+      currentProjectName = sanitizeProjectName(projectNameInput.value || currentProjectName);
+      const snapshot = projectSnapshot();
+      snapshot.projectName = currentProjectName;
+      const serialized = JSON.stringify(snapshot);
+      if (serialized === lastSavedSnapshot) return;
+      await storage.save(currentProjectId, snapshot);
+      await storage.setMeta('lastProjectId', currentProjectId);
+      lastSavedSnapshot = serialized;
+      await refreshProjectList();
+      setStatus(`Autosaved “${currentProjectName}”.`);
+    } catch (error) {
+      console.error(error);
+    }
   }
 
   function buildDemo() {
@@ -843,6 +1411,7 @@
     await renderer.init();
     renderer.setViewState({ x: renderer.app.screen.width / 2, y: renderer.app.screen.height / 2, scale: 1 });
 
+    $('newProjectBtn').addEventListener('click', createNewProject);
     $('newComponentBtn').addEventListener('click', createCustomComponent);
     primitiveSetSelect.addEventListener('change', () => {
       primitiveExperiment.activeId = primitiveSetSelect.value;
@@ -851,8 +1420,13 @@
       setStatus(`Primitive set: ${primitiveSetSelect.options[primitiveSetSelect.selectedIndex]?.textContent || primitiveExperiment.activeId}. Existing circuits remain unchanged.`);
     });
     backBtn.addEventListener('click', goBack);
-    $('saveBtn').addEventListener('click', saveProject);
-    $('loadBtn').addEventListener('click', loadProject);
+    $('saveBtn').addEventListener('click', () => saveProject());
+    $('loadBtn').addEventListener('click', () => loadProject());
+    projectSelect.addEventListener('change', () => loadProject(projectSelect.value));
+    projectNameInput.addEventListener('change', () => { currentProjectName = sanitizeProjectName(projectNameInput.value); projectNameInput.value = currentProjectName; autosaveIfChanged(); });
+    $('exportBtn').addEventListener('click', exportProject);
+    $('importBtn').addEventListener('click', () => importFile.click());
+    importFile.addEventListener('change', () => { const file = importFile.files?.[0]; if (file) importProjectFile(file); });
     $('demoBtn').addEventListener('click', buildDemo);
     undoBtn.addEventListener('click', undo); redoBtn.addEventListener('click', redo);
     copyBtn.addEventListener('click', copySelection); pasteBtn.addEventListener('click', pasteSelection);
@@ -884,7 +1458,35 @@
     });
 
     startGeneratorTimer();
-    renderPrimitiveSetControls(); renderLibrary(); renderBreadcrumbs(); renderComponentTestPanel(); hookActiveCircuitEvents(); setSimulationMode('run', { announce: false }); buildDemo(); renderer.app.canvas.focus();
+    renderPrimitiveSetControls(); renderLibrary(); renderBreadcrumbs(); renderComponentTestPanel(); hookActiveCircuitEvents(); setSimulationMode('run', { announce: false });
+
+    // Restore the last active project automatically. Older single-slot saves used the id "default".
+    let restored = false;
+    try {
+      const lastProjectId = await storage.getMeta('lastProjectId');
+      if (lastProjectId) {
+        const saved = await storage.load(lastProjectId);
+        if (saved) { applyProject(saved.project, { id: saved.id, savedAt: saved.savedAt }); restored = true; }
+      }
+      if (!restored) {
+        const legacy = await storage.load('default');
+        if (legacy) { applyProject(legacy.project, { id: legacy.id, savedAt: legacy.savedAt }); restored = true; }
+      }
+    } catch (error) { console.error('Could not restore last project', error); }
+
+    if (!restored) {
+      currentProjectName = 'Project 1';
+      currentProjectId = makeProjectId(currentProjectName);
+      projectNameInput.value = currentProjectName;
+      buildDemo();
+      await saveProject({ quiet: true });
+      setStatus('Created Project 1. Changes are autosaved locally.');
+    } else {
+      await refreshProjectList();
+    }
+
+    autosaveTimer = setInterval(autosaveIfChanged, 1500);
+    renderer.app.canvas.focus();
     setInterval(() => { updateStats(); refreshComponentTestPanel(); }, 200);
   }
 

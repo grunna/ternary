@@ -1,16 +1,12 @@
-# Ternary Lab v12
+# Ternary Lab
 
 A static balanced-ternary circuit simulator built with plain JavaScript and PixiJS. No TypeScript, npm, bundler or backend is required.
 
 ## Run
 
-From the project directory:
+Just open the index.html in a web browser
 
-```bash
-python3 -m http.server 8080
-```
-
-Open `http://localhost:8080`.
+You can also run in NodeJs with **npx serve . -l 3000**
 
 ## Editor controls
 
@@ -22,6 +18,10 @@ Open `http://localhost:8080`.
 - Ctrl/Cmd+Z = undo.
 - Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z = redo.
 - Drag empty background to pan; mouse wheel zooms.
+
+## Signal states
+
+`-1`, `0` and `+1` are logical ternary values. An unconnected or unresolved port is shown as `?`, rather than being treated as logical zero. Connecting a wire that would create a combinational feedback loop is rejected; sequential feedback will be introduced later with explicit stateful components.
 
 ## Reusable / hierarchical components
 
@@ -37,6 +37,10 @@ Version 6 adds reusable circuit-backed components.
 8. The component appears under **Reusable components** and can be instantiated multiple times.
 9. Select a reusable instance and press **Open internals** in Inspector to drill into it.
 10. Reusable components may contain other reusable components, so you can drill down through multiple levels.
+
+To extract an existing design, Shift+click or box-select its blocks, then choose **Create component from selection** in Inspector. Internal wiring moves into the new reusable component; connections crossing the selection edge become named Component Input/Output ports. Component dependency cycles, including indirect cycles such as `A → B → A`, are rejected.
+
+Reusable components can be removed from the library with **Remove**. Removal is blocked while the component is still instantiated in the project or referenced by another reusable component.
 
 Breadcrumbs show the current hierarchy, for example:
 
@@ -62,7 +66,7 @@ For now custom components are intended for combinational logic. Sequential/state
 
 ## Known next steps
 
-The most useful next editor feature is multi-select / box selection followed by **Create component from selection**. That will let an already-built subcircuit be encapsulated directly instead of creating a new reusable component workspace first.
+The next major editor milestone is stateful sequential components: explicit clock-edge semantics, registers and per-instance internal runtime. That is the foundation for a ternary CPU's program counter and register bank.
 
 
 ## v9 patch notes
@@ -76,6 +80,12 @@ This version intentionally keeps the complete v6 UI and editor behavior. It adds
 - Component Input blocks can also be clicked directly to cycle their test value
 
 The component test uses the real internal circuit, including nested reusable components.
+
+Saved component tests live below the input/output controls while editing a reusable component. Give the current setup a name and choose **Save current** to store its input values and current outputs as an expected-result regression case. **Run saved** reports every failing port. **Run all combinations** produces the full ternary truth table (`3^n` rows) for components with up to six inputs.
+
+Component and test-case names are unique within their respective project scopes. If a name is already used, Ternary Lab assigns the next available suffix, such as `Adder 2`.
+
+Component Input and Component Output ports are named uniquely as soon as they are added: `in`, `in 2`, … and `out`, `out 2`, …. Renaming a port uses the same rule.
 
 ## v12 simulation controls and sequence generators
 
@@ -110,3 +120,16 @@ The legacy `Clock` type is retained internally so older saved projects can still
 The primitive library can now be switched between experiment sets without invalidating existing circuits. Current candidate primitives include `MIN`, `MAX`, and `Normalize / carry` (`A+B+C = Sum + 3×Carry`). Each candidate carries logical-cost metadata and a physical-cost record. Physical transistor/delay/power values intentionally remain `unmodeled` until a concrete hardware implementation is selected.
 
 Preset sets include **All candidates**, **MIN / MAX**, **Compare / Select**, **Arithmetic core**, plus a **Custom experiment** assembled with checkboxes. The active experiment is saved with the project.
+
+## Project persistence
+
+Projects are stored locally in the browser with IndexedDB. The active project is autosaved when it changes and the most recently used project is reopened on the next start.
+
+- Use **New project** to create another named project.
+- Rename the current project in the name field in the top toolbar.
+- The project selector switches between locally saved projects.
+- **Save now** forces an immediate save; normal editing is autosaved about every 1.5 seconds.
+- **Export JSON** creates a portable `.ternary.json` backup.
+- **Import JSON** imports older/current project files and stores the imported project locally.
+- Primitive-set selection, reusable components and the test-suite storage slot are part of the project format.
+- Project format version 6 includes a migration entry point so older project data can be upgraded when loaded.

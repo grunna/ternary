@@ -13,17 +13,37 @@
       <span>balanced ternary circuit sandbox</span>
     </div>
     <div class="toolbar" aria-label="Project actions">
-      <button id="newComponentBtn">New component</button>
-      <button id="backBtn" disabled>Back</button>
-      <button id="saveBtn">Save</button>
-      <button id="undoBtn" disabled title="Ctrl/Cmd+Z">Undo</button>
-      <button id="redoBtn" disabled title="Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z">Redo</button>
-      <button id="copyBtn" disabled title="Ctrl/Cmd+C">Copy</button>
-      <button id="pasteBtn" disabled title="Ctrl/Cmd+V">Paste</button>
-      <button id="loadBtn">Load</button>
-      <button id="demoBtn">Demo</button>
-      <button id="deleteBtn" class="danger" disabled>Delete selected</button>
-      <button id="clearBtn" class="danger">Clear</button>
+      <div class="toolbar-group project-actions" aria-label="Project">
+        <label class="project-picker" title="Active project">
+          <select id="projectSelect" aria-label="Active project"></select>
+        </label>
+        <input id="projectName" class="project-name" type="text" value="Project 1" aria-label="Project name" />
+        <button id="newProjectBtn">New project</button>
+      </div>
+      <div class="toolbar-group" aria-label="Circuit structure">
+        <button id="newComponentBtn">New component</button>
+        <button id="backBtn" disabled>Back</button>
+      </div>
+      <div class="toolbar-group compact-actions" aria-label="Edit actions">
+        <button id="undoBtn" disabled title="Undo (Ctrl/Cmd+Z)" aria-label="Undo">Undo</button>
+        <button id="redoBtn" disabled title="Redo (Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z)" aria-label="Redo">Redo</button>
+        <button id="copyBtn" disabled title="Copy (Ctrl/Cmd+C)" aria-label="Copy">Copy</button>
+        <button id="pasteBtn" disabled title="Paste (Ctrl/Cmd+V)" aria-label="Paste">Paste</button>
+      </div>
+      <div class="toolbar-group file-actions" aria-label="File actions">
+        <button id="loadBtn">Load</button>
+        <button id="saveBtn">Save</button>
+        <button id="exportBtn">Export</button>
+        <button id="importBtn">Import</button>
+      </div>
+      <input id="importFile" type="file" accept="application/json,.json" hidden />
+      <div class="toolbar-group utility-actions" aria-label="Other actions">
+        <button id="demoBtn">Demo</button>
+      </div>
+      <div class="toolbar-group danger-actions" aria-label="Destructive actions">
+        <button id="deleteBtn" class="danger" disabled>Delete</button>
+        <button id="clearBtn" class="danger">Clear</button>
+      </div>
     </div>
   </header>
 
@@ -125,6 +145,10 @@
       </div>
     </aside>
   </main>
+
+  <footer class="project-footer">
+    <a href="https://github.com/grunna/ternary" target="_blank" rel="noopener noreferrer">github.com/grunna/ternary</a>
+  </footer>
 
   <script src="https://cdn.jsdelivr.net/npm/pixi.js@8.21.0/dist/pixi.min.js"></script>
   <script src="js/core.js"></script>

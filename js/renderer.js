@@ -17,11 +17,17 @@
     zero: 0x8a97a3,
     pos: 0x52c7a5,
     port: 0xcbd5de,
+    unknown: 0x8e6aaf,
   };
 
   function signalColor(value) {
     value = trit(value);
-    return value < 0 ? COLORS.neg : value > 0 ? COLORS.pos : COLORS.zero;
+    return value === null ? COLORS.unknown : value < 0 ? COLORS.neg : value > 0 ? COLORS.pos : COLORS.zero;
+  }
+
+  function signalText(value) {
+    value = trit(value);
+    return value === null ? '?' : value > 0 ? '+1' : String(value);
   }
 
   class CircuitRenderer {
@@ -527,23 +533,23 @@
       if (component.type === 'trit-input') {
         const value = trit(component.state.value);
         view.valueText.text = 'source';
-        view.valueButton._text.text = value > 0 ? '+1' : String(value);
+        view.valueButton._text.text = signalText(value);
         view.valueButton._bg.clear().roundRect(0, 0, 30, 28, 7).fill(signalColor(value));
       } else if (component.type === 'probe') {
         const value = trit(component.state.value);
-        view.valueText.text = `value = ${value > 0 ? '+1' : value}`;
+        view.valueText.text = `value = ${signalText(value)}`;
         view.valueText.style.fill = signalColor(value);
       } else if (component.type === 'component-input' || component.type === 'component-output') {
         const value = trit(component.type === 'component-input' ? component.state.value : component.inputs.in);
-        view.valueText.text = `${component.state.name || (component.type === 'component-input' ? 'in' : 'out')} = ${value > 0 ? '+1' : value}`;
+        view.valueText.text = `${component.state.name || (component.type === 'component-input' ? 'in' : 'out')} = ${signalText(value)}`;
         view.valueText.style.fill = signalColor(value);
         if (component.type === 'component-input' && view.valueButton) {
-          view.valueButton._text.text = value > 0 ? '+1' : String(value);
+          view.valueButton._text.text = signalText(value);
           view.valueButton._bg.clear().roundRect(0, 0, 30, 28, 7).fill(signalColor(value));
         }
       } else {
         const outs = Object.entries(component.outputs);
-        view.valueText.text = outs.length ? outs.map(([k, v]) => `${k}:${v > 0 ? '+1' : v}`).join('  ') : '';
+        view.valueText.text = outs.length ? outs.map(([k, v]) => `${k}:${signalText(v)}`).join('  ') : '';
       }
     }
 
@@ -869,11 +875,11 @@
       return Math.round(value / grid) * grid;
     }
 
-    addAtViewportCenter(type) {
+    addAtViewportCenter(type, state = undefined) {
       this.onBeforeChange('Add component');
       const globalCenter = new PIXI.Point(this.app.screen.width / 2, this.app.screen.height / 2);
       const p = this.world.toLocal(globalCenter);
-      const component = this.circuit.addComponent(type, this.snap(p.x - 75), this.snap(p.y - 40));
+      const component = this.circuit.addComponent(type, this.snap(p.x - 75), this.snap(p.y - 40), state);
       this.selectComponent(component.id);
       this.onAfterChange('Add component');
       return component;

@@ -2,8 +2,30 @@
   'use strict';
 
   const TRITS = Object.freeze([-1, 0, 1]);
+  const UNKNOWN = null;
   const clone = (obj) => JSON.parse(JSON.stringify(obj));
-  const trit = (value) => Number(value) < 0 ? -1 : Number(value) > 0 ? 1 : 0;
+  const isUnknown = (value) => value === null || value === undefined;
+  const trit = (value) => isUnknown(value) ? UNKNOWN : Number(value) < 0 ? -1 : Number(value) > 0 ? 1 : 0;
+
+  const hasGraphCycle = (wires) => {
+    const outgoing = new Map();
+    for (const wire of wires) {
+      if (!outgoing.has(wire.from.componentId)) outgoing.set(wire.from.componentId, []);
+      outgoing.get(wire.from.componentId).push(wire.to.componentId);
+    }
+    const visiting = new Set();
+    const visited = new Set();
+    const visit = (componentId) => {
+      if (visiting.has(componentId)) return true;
+      if (visited.has(componentId)) return false;
+      visiting.add(componentId);
+      for (const next of outgoing.get(componentId) || []) if (visit(next)) return true;
+      visiting.delete(componentId);
+      visited.add(componentId);
+      return false;
+    };
+    return [...outgoing.keys()].some(visit);
+  };
 
   const normalizeSequence = (sequence) => {
     const values = Array.isArray(sequence) ? sequence : String(sequence || '').split(/[\s,;]+/);
@@ -106,8 +128,8 @@
       const component = {
         id, type, x, y,
         state: { ...(definition.defaultState || {}), ...clone(state) },
-        inputs: Object.fromEntries(definition.inputs.map((name) => [name, 0])),
-        outputs: Object.fromEntries(definition.outputs.map((name) => [name, 0])),
+        inputs: Object.fromEntries(definition.inputs.map((name) => [name, UNKNOWN])),
+        outputs: Object.fromEntries(definition.outputs.map((name) => [name, UNKNOWN])),
       };
       this.components.set(id, component);
       this.events.emit('component-added', component);
@@ -164,6 +186,9 @@
       if (fromComponentId === toComponentId) throw new Error('Self-connections are not allowed.');
 
       const existing = [...this.wires.values()].find((wire) => wire.to.componentId === toComponentId && wire.to.port === toPort);
+      if (this.wouldCreateCombinationalLoop(fromComponentId, toComponentId, existing?.id)) {
+        throw new Error('Connection would create a combinational feedback loop.');
+      }
       if (existing) this.disconnect(existing.id);
 
       const id = `w${this.nextWireId++}`;
@@ -174,6 +199,25 @@
       this.events.emit('wire-added', wire);
       this.requestSimulation([toComponentId], `connected ${id}`);
       return wire;
+    }
+
+    wouldCreateCombinationalLoop(fromComponentId, toComponentId, ignoredWireId = null) {
+      const outgoing = new Map();
+      for (const wire of this.wires.values()) {
+        if (wire.id === ignoredWireId) continue;
+        if (!outgoing.has(wire.from.componentId)) outgoing.set(wire.from.componentId, []);
+        outgoing.get(wire.from.componentId).push(wire.to.componentId);
+      }
+      const pending = [toComponentId];
+      const visited = new Set();
+      while (pending.length) {
+        const componentId = pending.pop();
+        if (componentId === fromComponentId) return true;
+        if (visited.has(componentId)) continue;
+        visited.add(componentId);
+        pending.push(...(outgoing.get(componentId) || []));
+      }
+      return false;
     }
 
     setWireLabel(id, label) {
@@ -189,7 +233,7 @@
       this.wires.delete(id);
       const target = this.components.get(wire.to.componentId);
       if (target) {
-        target.inputs[wire.to.port] = 0;
+        target.inputs[wire.to.port] = UNKNOWN;
         this.requestSimulation([target.id], `disconnected ${id}`);
       }
       this.events.emit('wire-removed', wire);
@@ -384,6 +428,16 @@
 
     load(data) {
       if (!data || data.version !== 1) throw new Error('Unsupported circuit format.');
+      const rawComponents = new Map((data.components || []).map((component) => [component.id, component]));
+      const validWires = (data.wires || []).filter((wire) => {
+        const source = rawComponents.get(wire.from?.componentId);
+        const target = rawComponents.get(wire.to?.componentId);
+        if (!source || !target) return false;
+        const sourceDef = this.registry.get(source.type);
+        const targetDef = this.registry.get(target.type);
+        return sourceDef.outputs.includes(wire.from?.port) && targetDef.inputs.includes(wire.to?.port);
+      });
+      if (hasGraphCycle(validWires)) throw new Error('Circuit contains a combinational feedback loop.');
       this.clear();
       let maxComponent = 0;
       for (const raw of data.components || []) {
@@ -414,7 +468,7 @@
       this.nextWireId = maxWire + 1;
       for (const component of this.components.values()) {
         const definition = this.registry.get(component.type);
-        for (const input of definition.inputs) component.inputs[input] = 0;
+        for (const input of definition.inputs) component.inputs[input] = UNKNOWN;
       }
       for (const wire of this.wires.values()) {
         const source = this.components.get(wire.from.componentId);
@@ -477,6 +531,8 @@
     };
   }
 
+  const needsKnownInputs = (component, names) => names.every((name) => !isUnknown(component.inputs[name]));
+
   const registry = new ComponentRegistry();
 
   registry.register({ type: 'trit-input', label: 'Trit input', inputs: [], outputs: ['out'], defaultState: { value: 0 }, evaluate: (c) => ({ out: trit(c.state.value) }) });
@@ -504,24 +560,25 @@
     physical: { model: 'unmodeled', transistorEstimate: null, delayUnits: null, staticPowerUnits: null, notes },
   });
 
-  registry.register({ type: 'negate', label: 'Negate', category: 'logic', candidate: true, cost: experimentalCost('Balanced ternary inversion candidate.'), inputs: ['in'], outputs: ['out'], evaluate: (c) => ({ out: -trit(c.inputs.in) }) });
-  registry.register({ type: 'compare', label: 'Compare', category: 'logic', candidate: true, cost: experimentalCost('Returns -1, 0 or +1 for less/equal/greater.'), inputs: ['a', 'b'], outputs: ['out'], evaluate(c) { const a = trit(c.inputs.a), b = trit(c.inputs.b); return { out: a < b ? -1 : a > b ? 1 : 0 }; } });
-  registry.register({ type: 'select3', label: 'Select3', category: 'routing', candidate: true, cost: experimentalCost('Native three-way selector candidate.'), inputs: ['neg', 'zero', 'pos', 'select'], outputs: ['out'], evaluate(c) { const s = trit(c.inputs.select); return { out: trit(c.inputs[s < 0 ? 'neg' : s > 0 ? 'pos' : 'zero']) }; } });
-  registry.register({ type: 'min', label: 'MIN', category: 'logic', candidate: true, cost: experimentalCost('MIN(A,B) ternary logic candidate.'), inputs: ['a', 'b'], outputs: ['out'], evaluate(c) { return { out: Math.min(trit(c.inputs.a), trit(c.inputs.b)) }; } });
-  registry.register({ type: 'max', label: 'MAX', category: 'logic', candidate: true, cost: experimentalCost('MAX(A,B) ternary logic candidate.'), inputs: ['a', 'b'], outputs: ['out'], evaluate(c) { return { out: Math.max(trit(c.inputs.a), trit(c.inputs.b)) }; } });
+  registry.register({ type: 'negate', label: 'Negate', category: 'logic', candidate: true, cost: experimentalCost('Balanced ternary inversion candidate.'), inputs: ['in'], outputs: ['out'], evaluate: (c) => ({ out: needsKnownInputs(c, ['in']) ? -trit(c.inputs.in) : UNKNOWN }) });
+  registry.register({ type: 'compare', label: 'Compare', category: 'logic', candidate: true, cost: experimentalCost('Returns -1, 0 or +1 for less/equal/greater.'), inputs: ['a', 'b'], outputs: ['out'], evaluate(c) { if (!needsKnownInputs(c, ['a', 'b'])) return { out: UNKNOWN }; const a = trit(c.inputs.a), b = trit(c.inputs.b); return { out: a < b ? -1 : a > b ? 1 : 0 }; } });
+  registry.register({ type: 'select3', label: 'Select3', category: 'routing', candidate: true, cost: experimentalCost('Native three-way selector candidate.'), inputs: ['neg', 'zero', 'pos', 'select'], outputs: ['out'], evaluate(c) { const s = trit(c.inputs.select); if (isUnknown(s)) return { out: UNKNOWN }; return { out: trit(c.inputs[s < 0 ? 'neg' : s > 0 ? 'pos' : 'zero']) }; } });
+  registry.register({ type: 'min', label: 'MIN', category: 'logic', candidate: true, cost: experimentalCost('MIN(A,B) ternary logic candidate.'), inputs: ['a', 'b'], outputs: ['out'], evaluate(c) { return { out: needsKnownInputs(c, ['a', 'b']) ? Math.min(trit(c.inputs.a), trit(c.inputs.b)) : UNKNOWN }; } });
+  registry.register({ type: 'max', label: 'MAX', category: 'logic', candidate: true, cost: experimentalCost('MAX(A,B) ternary logic candidate.'), inputs: ['a', 'b'], outputs: ['out'], evaluate(c) { return { out: needsKnownInputs(c, ['a', 'b']) ? Math.max(trit(c.inputs.a), trit(c.inputs.b)) : UNKNOWN }; } });
   registry.register({
     type: 'normalize-carry', label: 'Normalize / carry', category: 'arithmetic', candidate: true,
     cost: experimentalCost('Normalizes A+B+C into Sum + 3×Carry.'),
     inputs: ['a', 'b', 'c'], outputs: ['sum', 'carry'],
     evaluate(c) {
+      if (!needsKnownInputs(c, ['a', 'b', 'c'])) return { sum: UNKNOWN, carry: UNKNOWN };
       const raw = trit(c.inputs.a) + trit(c.inputs.b) + trit(c.inputs.c);
       const carry = raw <= -2 ? -1 : raw >= 2 ? 1 : 0;
       return { sum: trit(raw - (3 * carry)), carry };
     },
   });
-  registry.register({ type: 'probe', label: 'Probe', inputs: ['in'], outputs: [], defaultState: { value: 0 }, evaluate(c) { c.state.value = trit(c.inputs.in); return {}; } });
+  registry.register({ type: 'probe', label: 'Probe', inputs: ['in'], outputs: [], defaultState: { value: UNKNOWN }, evaluate(c) { c.state.value = trit(c.inputs.in); return {}; } });
   registry.register({ type: 'component-input', label: 'Component Input', inputs: [], outputs: ['out'], defaultState: { name: 'in', value: 0 }, boundary: 'input', evaluate: (c) => ({ out: trit(c.state.value) }) });
-  registry.register({ type: 'component-output', label: 'Component Output', inputs: ['in'], outputs: [], defaultState: { name: 'out', value: 0 }, boundary: 'output', evaluate(c) { c.state.value = trit(c.inputs.in); return {}; } });
+  registry.register({ type: 'component-output', label: 'Component Output', inputs: ['in'], outputs: [], defaultState: { name: 'out', value: UNKNOWN }, boundary: 'output', evaluate(c) { c.state.value = trit(c.inputs.in); return {}; } });
 
-  global.TernaryCore = { TRITS, trit, clone, normalizeSequence, nextSequenceState, EventBus, ComponentRegistry, Circuit, registry, slug, boundaryPorts, makeCustomDefinition };
+  global.TernaryCore = { TRITS, UNKNOWN, isUnknown, trit, clone, normalizeSequence, nextSequenceState, EventBus, ComponentRegistry, Circuit, registry, slug, boundaryPorts, makeCustomDefinition };
 })(window);
