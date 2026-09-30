@@ -1,0 +1,237 @@
+# Ternary Lab roadmap
+
+Status legend: `[x]` implemented, `[ ]` not implemented yet.
+
+The guiding rule is: **discover a native balanced-ternary architecture instead of translating a binary CPU gate-for-gate.**
+
+## Phase 1 — Project foundation
+- [x] Static HTML application; no backend required
+- [x] Plain JavaScript; no TypeScript or build step
+- [x] PixiJS workspace renderer
+- [x] HTML/CSS controls around the workspace
+- [x] Pan and zoom
+- [x] Grid and snapping
+- [x] Simulation core separated from renderer
+
+## Phase 2 — Trit model
+- [x] Logical values `-1`, `0`, `+1`
+- [x] Trit normalization/validation helper
+- [ ] Separate `unknown/unconnected` state from logical zero
+- [x] Signal changes propagate through the circuit
+- [x] Logical values are independent of UI rendering
+- [ ] Configurable physical voltage mapping, e.g. `-1=0V`, `0=1.65V`, `+1=3.3V`
+
+## Phase 3 — Circuit model
+- [x] `Circuit`
+- [x] `Component`
+- [x] Input/output port definitions
+- [x] `Wire`
+- [x] Fan-out: one output can drive multiple inputs
+- [x] Reject invalid port direction / missing components
+- [x] One driver per input; a new wire replaces the old input connection
+- [ ] Explicit graph-level combinational-loop detection
+- [x] Runtime protection against non-settling propagation
+
+## Phase 4 — Simulation engine
+- [x] Event-driven propagation queue
+- [x] Dirty/queued component evaluation
+- [x] Propagate only changed output values
+- [x] Deterministic single-threaded evaluation
+- [x] Maximum propagation-step guard
+- [x] Evaluation and signal-change statistics
+- [x] Core can run without Pixi/rendering
+- [x] Core/renderer separation leaves room for a later Web Worker
+- [ ] Actual Web Worker execution
+
+## Phase 5 — Primitive ternary components
+- [x] Trit Input
+- [x] Probe / Trit Output
+- [x] Negate `x -> -x`
+- [x] Compare `A<B -> -1`, `A=B -> 0`, `A>B -> +1`
+- [x] Select3
+- [x] MIN candidate
+- [x] MAX candidate
+- [x] Normalize / carry primitive candidate
+- [x] Primitive sets configurable as experiments instead of one fixed registry
+- [x] Primitive-set metadata for logical/physical cost
+
+## Phase 6 — Graphical editor
+- [x] Add components from library
+- [x] Drag/move components
+- [x] Visible named ports
+- [x] Drag output -> input to connect
+- [x] Click output -> pointer-down on input to connect
+- [x] Rewire an existing input connection
+- [x] Select components
+- [x] Select wires
+- [x] Delete selected component
+- [x] Delete selected wire
+- [x] Pan / zoom
+- [x] Grid snapping
+- [x] Inspector
+- [x] Visual signal values/colors
+- [x] Highlight possible input ports while connecting
+- [x] Undo / redo (toolbar + Ctrl/Cmd shortcuts)
+- [x] Multi-select
+- [x] Copy / paste
+- [x] Box selection
+- [x] Rename components/signals
+- [x] Configurable component placement / port layout
+
+## Phase 7 — Signal visualization and stepping
+- [x] Current trit shown on wires/components
+- [x] Separate Pixi animation layer
+- [x] Animated signal pulses
+- [x] Animation is separate from logical propagation speed
+- [x] Settle/run-to-stable command
+- [x] Slow `VISUALIZE` mode that schedules logical events visibly
+- [x] `STEP` one propagation event at a time
+- [x] Pause/resume
+- [x] `CLOCK STEP`
+- [x] Configurable sequence generator for timing/control signals
+- [x] Sequence presets: `0 ↔ +1`, ternary loop, ternary ping-pong
+- [x] Custom trit sequences
+- [x] Per-generator interval and auto-run
+- [x] Inspect queued events
+
+## Phase 8 — Hierarchical/custom components
+- [ ] Select an existing subcircuit and create a component directly (depends on multi-select)
+- [x] Create a new reusable component circuit
+- [x] Define external input/output ports with Component Input / Component Output blocks
+- [x] Rename external ports in Inspector
+- [x] Save custom component definition in library
+- [x] Instantiate custom component multiple times
+- [x] Open/drill into a custom component from Inspector
+- [x] Breadcrumb navigation and Back
+- [x] Custom components may contain other custom components
+- [x] Recursive multi-level drill-down works for combinational components
+- [x] Custom block behavior is evaluated from its internal circuit rather than a hard-coded shortcut
+- [ ] Detect indirect custom-component recursion cycles (A -> B -> A)
+- [ ] Preserve stateful internal runtime per instance for sequential components (Phase 15)
+
+## Phase 9 — Persistence and project format
+- [x] IndexedDB project storage
+- [x] Save/load project
+- [x] Circuit data separated from Pixi objects
+- [x] Versioned circuit serialization format
+- [ ] Named multiple projects
+- [x] Reusable custom-component library stored with the project
+- [ ] Primitive-set storage
+- [ ] Test-suite storage
+- [ ] Export JSON file
+- [ ] Import JSON file
+- [ ] Migration strategy between future file-format versions
+
+## Phase 10 — Component test system
+- [ ] Define input/output contract
+- [ ] Expected-output test cases
+- [ ] Automatic truth-table testing
+- [ ] Exhaustive ternary testing for small components
+- [ ] Example: all `3^3 = 27` full-adder inputs
+- [ ] Show exact failing combinations
+- [ ] Regression tests for edited components
+- [ ] Recursive tests of hierarchical components
+
+## Phase 11 — Benchmarking
+- [x] Basic component count
+- [x] Basic wire count
+- [x] Evaluation count
+- [x] Signal-change count
+- [ ] Primitive count through hierarchy
+- [ ] Circuit depth
+- [ ] Critical propagation path
+- [ ] Fan-out metrics
+- [ ] Transition counts per test/workload
+- [ ] Logical cost model
+- [ ] Side-by-side implementation comparison
+- [ ] Pareto comparison rather than one arbitrary global score
+
+## Phase 12 — Native ternary architecture experiments
+- [ ] Compare alternative primitive sets
+- [ ] Compare adder constructions
+- [ ] Compare ternary comparator constructions
+- [ ] Explore native 3-way selectors/routers
+- [ ] Explore ternary control signals
+- [ ] `-1 / 0 / +1` as decrement / hold / increment where useful
+- [ ] `-1 / 0 / +1` as read / idle / write where physically sensible
+- [ ] Record design rationale for major components
+- [ ] Flag binary-style two-state control where a ternary design may be better
+
+## Phase 13 — Automatic circuit search
+- [ ] Generate candidate circuits from a contract
+- [ ] Exhaustively test generated candidates
+- [ ] Reject incorrect candidates
+- [ ] Mutate circuit graphs
+- [ ] Evolutionary/genetic search
+- [ ] Optimize multiple metrics: nodes, depth, wires, transitions, physical cost
+- [ ] Preserve Pareto-optimal alternatives
+- [ ] Open generated circuits in the normal editor
+
+## Phase 14 — Physical implementation cost model
+- [ ] Physical implementation metadata per primitive
+- [ ] Estimated transistor count
+- [ ] Optional resistor/comparator/device count
+- [ ] Estimated propagation delay
+- [ ] Estimated static power
+- [ ] Estimated dynamic power from switching activity
+- [ ] Configurable voltage encoding
+- [ ] Compare logically efficient vs physically efficient designs
+
+## Phase 15 — Sequential ternary logic
+- [x] Clock / sequence source model
+- [ ] Ternary latch experiments
+- [ ] Ternary register
+- [ ] Defined clock-edge semantics
+- [ ] Separate combinational settle from state commit
+- [ ] Reset / initial state
+- [ ] Register bank
+- [ ] Signal/register timeline
+
+## Phase 16 — CPU building blocks
+- [ ] Native ternary adder
+- [ ] Negation/subtraction strategy
+- [ ] Comparator
+- [ ] Selector/router network
+- [ ] ALU only after primitive/operation experiments justify its shape
+- [ ] Register bank
+- [ ] Program-counter strategy
+- [ ] Instruction representation
+- [ ] Control architecture
+- [ ] Memory interface
+- [ ] Branching
+- [ ] Minimal runnable ternary CPU
+
+## Phase 17 — CPU debugging
+- [ ] Load a small ternary program
+- [ ] Instruction step
+- [ ] Clock step
+- [ ] Propagation step
+- [ ] Highlight active components
+- [ ] Follow a trit through the CPU
+- [ ] Breakpoints
+- [ ] Probes
+- [ ] Waveform/timeline
+- [ ] Drill from CPU to primitive implementation while debugging
+
+
+## v9 additions
+
+- [x] Preserve full v6 editor UI while adding new features
+- [x] Click output → click input connection using pointer-down fallback
+- [x] Isolated reusable-component test panel
+- [x] Set each external input to -1 / 0 / +1
+- [x] Show external outputs live
+- [x] Test nested reusable components through the real circuit evaluator
+- [ ] Save named component test cases
+- [ ] Exhaustive truth-table runner
+
+
+## v10 additions
+
+- [x] Shift+click multi-select
+- [x] Shift+drag box selection
+- [x] Move selected components as a group
+- [x] Copy/paste selected subcircuits including internal wires
+- [x] Rename component instances
+- [x] Rename wire signals and render signal labels
+- [x] Configure component X/Y placement, width, port spacing and input/output side

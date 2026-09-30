@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ternary Lab</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <strong>Ternary Lab</strong>
+      <span>balanced ternary circuit sandbox</span>
+    </div>
+    <div class="toolbar" aria-label="Project actions">
+      <button id="newComponentBtn">New component</button>
+      <button id="backBtn" disabled>Back</button>
+      <button id="saveBtn">Save</button>
+      <button id="undoBtn" disabled title="Ctrl/Cmd+Z">Undo</button>
+      <button id="redoBtn" disabled title="Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z">Redo</button>
+      <button id="copyBtn" disabled title="Ctrl/Cmd+C">Copy</button>
+      <button id="pasteBtn" disabled title="Ctrl/Cmd+V">Paste</button>
+      <button id="loadBtn">Load</button>
+      <button id="demoBtn">Demo</button>
+      <button id="deleteBtn" class="danger" disabled>Delete selected</button>
+      <button id="clearBtn" class="danger">Clear</button>
+    </div>
+  </header>
+
+  <div id="breadcrumbs" class="breadcrumbs"></div>
+
+  <main class="app-shell">
+    <aside class="sidebar left-panel">
+      <h2>Primitives</h2>
+      <p class="hint">Click a component to place it in the active circuit.</p>
+      <div class="primitive-set-panel">
+        <label class="editor-field">Primitive set
+          <select id="primitiveSetSelect"></select>
+        </label>
+        <div id="primitiveSetDescription" class="hint primitive-set-description"></div>
+        <details>
+          <summary>Configure experiment</summary>
+          <div id="primitiveSetChecks" class="primitive-set-checks"></div>
+        </details>
+        <div id="primitiveSetCost" class="primitive-set-cost"></div>
+      </div>
+      <div id="primitiveList" class="component-list"></div>
+
+      <div id="interfaceSection" hidden>
+        <h2>Component interface</h2>
+        <p class="hint">These blocks become the external ports of this reusable component.</p>
+        <div id="interfaceList" class="component-list"></div>
+      </div>
+
+      <h2>Reusable components</h2>
+      <div id="customList" class="component-list"></div>
+      <p id="customEmpty" class="hint">No custom components yet.</p>
+
+      <div class="legend">
+        <h3>Signal</h3>
+        <div><span class="dot neg"></span>-1</div>
+        <div><span class="dot zero"></span>0</div>
+        <div><span class="dot pos"></span>+1</div>
+      </div>
+    </aside>
+
+    <section class="workspace-wrap" aria-label="Circuit workspace">
+      <div id="workspace"></div>
+      <div class="workspace-help">
+        <span>Drag blocks · Shift+click multi-select</span>
+        <span>Click output → input, or drag output → input</span>
+        <span>Click Trit input value to cycle</span>
+        <span>Drag background to pan · Shift+drag box-select · wheel to zoom</span>
+        <span>Reusable components can be opened from Inspector</span>
+      </div>
+      <div id="status" class="status" role="status" aria-live="polite">Ready</div>
+    </section>
+
+    <aside class="sidebar right-panel">
+      <h2>Inspector</h2>
+      <div id="inspector" class="inspector empty">Select a component.</div>
+
+      <div id="componentTestSection" hidden>
+        <h2>Component test</h2>
+        <p class="hint">Test this reusable component in isolation. Set each external input to -1, 0 or +1 and inspect the outputs live.</p>
+        <div id="componentTestPanel" class="component-test-panel"></div>
+      </div>
+
+      <h2>Simulation</h2>
+      <div class="simulation-controls">
+        <div class="simulation-mode-row" role="group" aria-label="Simulation mode">
+          <button id="runBtn" class="active" type="button">RUN</button>
+          <button id="visualizeBtn" type="button">VISUALIZE</button>
+          <button id="pauseBtn" type="button">Pause</button>
+        </div>
+        <div class="simulation-step-row">
+          <button id="stepBtn" type="button">STEP</button>
+          <button id="clockStepBtn" type="button">CLOCK STEP</button>
+        </div>
+        <label class="editor-field simulation-speed">Visualize delay
+          <select id="visualizeSpeed">
+            <option value="800">800 ms</option>
+            <option value="500" selected>500 ms</option>
+            <option value="250">250 ms</option>
+            <option value="100">100 ms</option>
+          </select>
+        </label>
+      </div>
+      <label class="toggle-row">
+        <input id="animateSignals" type="checkbox" checked />
+        <span>Animate signal changes</span>
+      </label>
+      <button id="settleBtn" class="wide">Settle circuit now</button>
+
+      <div class="queue-inspector">
+        <div class="queue-header"><strong>Event queue</strong><span id="queueCount">0</span></div>
+        <div id="queueList" class="queue-list"><div class="queue-empty">No queued events.</div></div>
+      </div>
+
+      <div class="stats" id="stats">
+        <div><span>Components</span><strong id="statComponents">0</strong></div>
+        <div><span>Wires</span><strong id="statWires">0</strong></div>
+        <div><span>Evaluations</span><strong id="statEvaluations">0</strong></div>
+        <div><span>Signal changes</span><strong id="statChanges">0</strong></div>
+      </div>
+    </aside>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/pixi.js@8.21.0/dist/pixi.min.js"></script>
+  <script src="js/core.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/renderer.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
