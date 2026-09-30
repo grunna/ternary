@@ -125,14 +125,14 @@ The guiding rule is: **discover a native balanced-ternary architecture instead o
 - [x] Migration strategy between future file-format versions
 
 ## Phase 10 — Component test system
-- [ ] Define input/output contract
-- [ ] Expected-output test cases
-- [ ] Automatic truth-table testing
-- [ ] Exhaustive ternary testing for small components
-- [ ] Example: all `3^3 = 27` full-adder inputs
-- [ ] Show exact failing combinations
-- [ ] Regression tests for edited components
-- [ ] Recursive tests of hierarchical components
+- [x] Define input/output contract
+- [x] Expected-output test cases
+- [x] Automatic truth-table testing
+- [x] Exhaustive ternary testing for small components
+- [x] Example: all `3^3 = 27` full-adder inputs
+- [x] Show exact failing combinations
+- [x] Regression tests for edited components
+- [x] Recursive tests of hierarchical components
 
 ## Phase 11 — Benchmarking
 - [x] Basic component count

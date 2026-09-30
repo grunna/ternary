@@ -83,6 +83,10 @@ The component test uses the real internal circuit, including nested reusable com
 
 Saved component tests live below the input/output controls while editing a reusable component. Give the current setup a name and choose **Save current** to store its input values and current outputs as an expected-result regression case. **Run saved** reports every failing port. **Run all combinations** produces the full ternary truth table (`3^n` rows) for components with up to six inputs.
 
+Before saving a test, set its expected output values explicitly in **Expected outputs for next saved case**. If a later edit removes a port used by a saved test, the runner reports that its component contract changed instead of silently treating the test as valid.
+
+Use **Demo** to create a reusable ternary Full Adder with `a`, `b`, `c` inputs and `sum`, `carry` outputs. Its saved suite covers all 27 ternary input combinations.
+
 Component and test-case names are unique within their respective project scopes. If a name is already used, Ternary Lab assigns the next available suffix, such as `Adder 2`.
 
 Component Input and Component Output ports are named uniquely as soon as they are added: `in`, `in 2`, … and `out`, `out 2`, …. Renaming a port uses the same rule.

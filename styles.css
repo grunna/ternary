@@ -59,6 +59,7 @@ button { color: var(--text); }
   cursor: pointer;
   white-space: nowrap;
 }
+.toolbar select { border: 1px solid var(--border); background: var(--panel-2); color: var(--text); border-radius: 8px; padding: 7px 8px; }
 .compact-actions button { min-width: 46px; }
 .danger-actions { border-left-color: rgba(241, 116, 116, .45); }
 .danger-actions button { background: #292024; }

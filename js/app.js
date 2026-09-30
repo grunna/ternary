@@ -28,6 +28,8 @@
   let currentProjectId = null;
   let currentProjectName = 'Project 1';
   let testSuites = [];
+  let componentTestDraftExpected = {};
+  let componentTestDraftComponentId = null;
   let lastSavedSnapshot = '';
   let autosaveTimer = null;
 
@@ -466,7 +468,8 @@
       const activeSuite = componentTestSuite();
       const values = testPortValues(boundaries);
       const label = uniqueName(name.value, activeSuite.cases.map((testCase) => testCase.name), 'Case');
-      activeSuite.cases.push({ id: `test-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, name: label, inputs: values.inputs, expectedOutputs: values.outputs });
+      const expectedOutputs = Object.fromEntries(boundaries.outputs.map((port) => [port.componentId, trit(componentTestDraftExpected[port.componentId] ?? values.outputs[port.componentId])]));
+      activeSuite.cases.push({ id: `test-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, name: label, inputs: values.inputs, expectedOutputs });
       autosaveIfChanged();
       renderComponentTestPanel();
       setStatus(`Saved test case “${label}”.`);
@@ -525,6 +528,13 @@
       const row = document.createElement('div');
       row.className = 'component-test-run';
       try {
+        const currentInputIds = new Set(boundaries.inputs.map((port) => port.componentId));
+        const currentOutputIds = new Set(boundaries.outputs.map((port) => port.componentId));
+        const staleInputs = Object.keys(testCase.inputs || {}).filter((id) => !currentInputIds.has(id));
+        const staleOutputs = Object.keys(testCase.expectedOutputs || {}).filter((id) => !currentOutputIds.has(id));
+        if (staleInputs.length || staleOutputs.length) {
+          throw new Error(`port contract changed (${staleInputs.length} removed input${staleInputs.length === 1 ? '' : 's'}, ${staleOutputs.length} removed output${staleOutputs.length === 1 ? '' : 's'})`);
+        }
         const actual = evaluateComponentTest(testCase.inputs || {}, boundaries);
         const mismatches = boundaries.outputs.filter((port) => !(port.componentId in (testCase.expectedOutputs || {})) || actual[port.componentId] !== Number(testCase.expectedOutputs[port.componentId]));
         if (mismatches.length) {
@@ -541,7 +551,7 @@
       } catch (error) {
         failures += 1;
         row.classList.add('failed');
-        row.textContent = `${testCase.name || 'Unnamed case'} — could not run: ${error.message}`;
+        row.textContent = `${testCase.name || 'Unnamed case'} — incompatible or could not run: ${error.message}`;
       }
       list.appendChild(row);
     }
@@ -607,6 +617,10 @@
     componentTestSection.hidden = current.kind !== 'custom';
     componentTestPanel.innerHTML = '';
     if (current.kind !== 'custom') return;
+    if (componentTestDraftComponentId !== current.customId) {
+      componentTestDraftComponentId = current.customId;
+      componentTestDraftExpected = {};
+    }
 
     const boundaries = componentTestBoundaries();
     if (!boundaries.inputs.length && !boundaries.outputs.length) {
@@ -652,6 +666,27 @@
         group.appendChild(row);
       }
       componentTestPanel.appendChild(group);
+
+      const expected = document.createElement('div');
+      expected.className = 'component-test-group component-test-expected';
+      expected.innerHTML = '<h3>Expected outputs for next saved case</h3>';
+      for (const output of boundaries.outputs) {
+        const row = document.createElement('div');
+        row.className = 'component-test-row';
+        const actual = trit(circuit().components.get(output.componentId)?.state?.value);
+        const selected = trit(componentTestDraftExpected[output.componentId] ?? actual);
+        row.innerHTML = `<span class="component-test-name">${output.name}</span><span class="trit-choice"></span>`;
+        const choices = row.querySelector('.trit-choice');
+        for (const value of [-1, 0, 1]) {
+          const button = document.createElement('button');
+          button.type = 'button'; button.textContent = fmt(value);
+          button.classList.toggle('active', selected === value);
+          button.addEventListener('click', () => { componentTestDraftExpected[output.componentId] = value; renderComponentTestPanel(); });
+          choices.appendChild(button);
+        }
+        expected.appendChild(row);
+      }
+      componentTestPanel.appendChild(expected);
     }
 
     renderSavedTestCases(boundaries);
@@ -1240,6 +1275,36 @@
 
   function buildDemo() {
     if (current.kind !== 'root') return setStatus('Return to Project before loading the demo.', true);
+    if ($('demoSelect').value === 'compare') return buildCompareDemo();
+    const label = uniqueName('Ternary Full Adder', [...customComponents.values()].map((meta) => meta.label), 'Ternary Full Adder');
+    const id = `${slug(label)}-${Date.now().toString(36)}`;
+    const inner = new Circuit(registry);
+    const inputs = ['a', 'b', 'c'].map((name, index) => inner.addComponent('component-input', -260, (index - 1) * 90, { name }));
+    const normalize = inner.addComponent('normalize-carry', 0, 0);
+    const sum = inner.addComponent('component-output', 260, -65, { name: 'sum' });
+    const carry = inner.addComponent('component-output', 260, 65, { name: 'carry' });
+    inputs.forEach((input, index) => inner.connect(input.id, 'out', normalize.id, ['a', 'b', 'c'][index]));
+    inner.connect(normalize.id, 'sum', sum.id, 'in');
+    inner.connect(normalize.id, 'carry', carry.id, 'in');
+    const meta = { id, type: `custom:${id}`, label, circuit: inner.serialize() };
+    customComponents.set(id, meta); registerCustom(meta);
+    const cases = [];
+    for (const a of [-1, 0, 1]) for (const b of [-1, 0, 1]) for (const c of [-1, 0, 1]) {
+      const raw = a + b + c;
+      const carryValue = raw <= -2 ? -1 : raw >= 2 ? 1 : 0;
+      cases.push({ id: `full-adder-${a}-${b}-${c}`, name: `a=${fmt(a)}, b=${fmt(b)}, c=${fmt(c)}`,
+        inputs: { [inputs[0].id]: a, [inputs[1].id]: b, [inputs[2].id]: c },
+        expectedOutputs: { [sum.id]: raw - (3 * carryValue), [carry.id]: carryValue } });
+    }
+    testSuites = testSuites.filter((suite) => suite.componentId !== id);
+    testSuites.push({ componentId: id, cases });
+    rootCircuit.clear();
+    rootCircuit.addComponent(meta.type, 0, 0, { label });
+    renderer.select(null); renderLibrary(); updateStats(); resetHistory();
+    setStatus(`Created “${label}” with all 27 ternary full-adder test cases.`);
+  }
+
+  function buildCompareDemo() {
     rootCircuit.clear();
     const a = rootCircuit.addComponent('trit-input', -320, -90, { value: 1 });
     const b = rootCircuit.addComponent('trit-input', -320, 80, { value: 0 });
@@ -1249,7 +1314,7 @@
     rootCircuit.connect(a.id, 'out', neg.id, 'in'); rootCircuit.connect(neg.id, 'out', cmp.id, 'a');
     rootCircuit.connect(b.id, 'out', cmp.id, 'b'); rootCircuit.connect(cmp.id, 'out', out.id, 'in');
     renderer.select(null); updateStats(); resetHistory();
-    setStatus('Demo loaded. Click an output, then press an input; drag/drop also works.');
+    setStatus('Compare demo loaded. Change either input to inspect the result.');
   }
 
   function stopVisualizeTimer() {
