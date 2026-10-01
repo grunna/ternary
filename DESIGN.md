@@ -19,6 +19,7 @@ This document records architectural and structural decisions for the sequential 
 | Clocked state boundary | settle → clock edge | The simulator internally applies all samples from one clock edge together after combinational propagation. This is an implementation detail: users drive CLK directly and do not issue a separate commit command. |
 | Ternary register bank | d,address,action,clock,reset → out | Three one-trit registers selected by `-1 / 0 / +1`; action is read / idle / write. Reads are combinational, writes commit only at the state boundary. |
 | Reusable component boundary | named input/output ports | Components own an explicit public contract, saved regression cases and per-instance internal runtime. Structural sequential components can therefore retain state without sharing it across callers. |
+| 7-segment output boundary | `A–G, Sign`: `0` = off, `+1` = on | This is a deliberate two-state peripheral adapter, not binary logic leaking into the ternary datapath. Ternary decoders remain open components; they turn ternary decisions into the two physical states an individual segment needs. `-1`, `?` and `Z` remain visible as invalid at this boundary rather than being mistaken for off. |
 
 ## Technology-neutral device/cell boundary
 

@@ -19,9 +19,11 @@
         </label>
         <input id="projectName" class="project-name" type="text" value="Project 1" aria-label="Project name" />
         <button id="newProjectBtn">New project</button>
+        <button id="deleteProjectBtn" class="danger">Delete project</button>
       </div>
       <div class="toolbar-group" aria-label="Circuit structure">
         <button id="newComponentBtn">New component</button>
+        <button id="autoLayoutBtn" title="Arrange by signal layers">Auto layout</button>
         <button id="backBtn" disabled>Back</button>
       </div>
       <div class="toolbar-group compact-actions" aria-label="Edit actions">
@@ -38,7 +40,7 @@
       </div>
       <input id="importFile" type="file" accept="application/json,.json" hidden />
       <div class="toolbar-group utility-actions" aria-label="Other actions">
-        <select id="demoSelect" aria-label="Demo example"><option value="full-adder">Full adder reference</option><option value="adder-comparison">Adder comparison</option><option value="primitive-set-comparison">Primitive set comparison</option><option value="comparator-comparison">Comparator comparison</option><option value="selector-router">Selector / router</option><option value="control-signals">Ternary control signals</option><option value="sequential-storage">Ternary latch / register</option><option value="register-bank">Ternary register bank</option><option value="device-cells">Ternary device cells</option><option value="seven-segment">7-segment display</option><option value="structural-storage">Structural latch / register</option><option value="compare">Compare</option></select>
+        <select id="demoSelect" aria-label="Demo example"><option value="full-adder">Full adder reference</option><option value="adder-comparison">Adder comparison</option><option value="primitive-set-comparison">Primitive set comparison</option><option value="comparator-comparison">Comparator comparison</option><option value="selector-router">Selector / router</option><option value="control-signals">Ternary control signals</option><option value="sequential-storage">Ternary latch / register</option><option value="register-bank">Ternary register bank</option><option value="device-cells">Ternary device cells</option><option value="seven-segment">7-segment display</option><option value="one-trit-display">1-trit signed display decoder</option><option value="three-trit-display">3-trit signed display decoder</option><option value="structural-storage">Structural latch / register</option><option value="compare">Compare</option></select>
         <button id="demoBtn">Load demo</button>
       </div>
       <div class="toolbar-group danger-actions" aria-label="Destructive actions">

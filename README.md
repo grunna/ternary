@@ -18,6 +18,7 @@ You can also run in NodeJs with **npx serve . -l 3000**
 - Ctrl/Cmd+Z = undo.
 - Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z = redo.
 - Drag empty background to pan; mouse wheel zooms.
+- Use **Auto layout** to arrange connected components in signal-flow columns without overlap.
 
 ## Signal states
 
@@ -151,7 +152,7 @@ Preset sets include **All candidates**, **MIN / MAX**, **Compare / Select**, **A
 
 ## Project persistence
 
-Projects are stored locally in the browser with IndexedDB. The active project is autosaved when it changes and the most recently used project is reopened on the next start.
+Projects are stored locally in the browser with IndexedDB. **New project** creates a separate empty project; choose a project in the top-left picker and use **Delete project** to remove it after confirmation. The active project is autosaved when it changes and the most recently used project is reopened on the next start.
 
 - Use **New project** to create another named project.
 - Rename the current project in the name field in the top toolbar.
@@ -174,6 +175,12 @@ Choose **Ternary device cells** to explore the new lower abstraction layer. **Te
 ## 7-segment output
 
 Choose **7-segment display** to load a visible output component with eight independent inputs: `A`–`G` and `Sign`. This peripheral intentionally uses two-state control: `0` means off and `+1` means on. A `-1`, `?` or `Z` input is rendered as an invalid segment state instead of silently becoming off. The display contains no number decoder; the future ternary decoder will be a separate, openable logic component that drives these eight ports. When editing a reusable component, choose **7-segment Output** under **Component interface** to make this visual display the component’s visible output; connect internal logic to its A–G/Sign ports.
+
+**Segment-control boundary:** the display is deliberately a two-state peripheral. Inside a decoder, signals remain ternary and `-1 / 0 / +1` may each have a meaning. At its final boundary, each LED-like segment only needs **off** or **on**, represented by `0 / +1`. This conversion is explicit and openable; `-1`, `?` and `Z` are kept visible as invalid instead of being coerced to off.
+
+Choose **1-trit signed display decoder** for the smallest open decoder. Its sole trit maps to `-1`, `0` and `+1`. Open it to see the complete construction: `Threshold3` produces one-hot rails, `MAX` creates the shared segments for digit 1, and `MIN` produces an explicit off signal for the middle segment. Its three input cases are checked exhaustively.
+
+Choose **3-trit signed display decoder** to load an opening fixed-range experiment. Its inputs have weights `9`, `3` and `1`; the 19 words for `-9 … +9` show a signed decimal digit, while the eight remaining three-trit words are blank. Its gate-level mapping has been checked across all 27 input words. Open the component to inspect the full gate network: three level detectors, exact-match MIN chains, and MAX trees for each segment.
 
 ## Register bank
 

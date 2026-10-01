@@ -193,8 +193,18 @@ The simulator stops at idealized structural cells. It does not model transistors
 - [x] Register bank
 - [x] Signal/register timeline
 
-## Phase 16 — CPU building blocks
+## Phase 16A — Ternary display experiments
 - [x] 7-segment output component with explicit `0 / +1` segment-control contract
+- [x] Visual 7-segment output for reusable components
+- [x] Build an opening one-trit → 7-segment decoder from `Threshold3`, `MIN` and `MAX`
+- [x] Build a fixed-range three-trit `-9 … +9` display decoder from `Threshold3`, `MIN` and `MAX`
+- [x] Validate all 27 input words for the fixed-range three-trit decoder
+- [x] Verify all three decoder cases: `-1`, `0`, `+1`
+- [x] Record the two-state segment-control boundary
+- [ ] Decide how a multi-trit value is shown natively
+- [ ] Defer balanced-ternary → decimal conversion until multi-trit arithmetic exists
+
+## Phase 16B — CPU building blocks
 - [ ] Native ternary adder
 - [ ] Negation/subtraction strategy
 - [ ] Comparator

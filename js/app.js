@@ -32,6 +32,7 @@
   let componentTestDraftComponentId = null;
   let lastSavedSnapshot = '';
   let autosaveTimer = null;
+  let projectActionBusy = false;
   const stateTimeline = [];
 
   const history = { undo: [], redo: [], pending: null, restoring: false };
@@ -100,6 +101,103 @@
     try { circuit().load(JSON.parse(serialized)); renderer.select(null); updateStats(); }
     finally { history.restoring = false; history.pending = null; }
   }
+  function componentLayoutSize(component) {
+    const definition = registry.get(component.type);
+    const visual = component.type === 'seven-segment-display' || component.type === 'component-seven-segment-display' || definition.visual?.kind === 'seven-segment';
+    const width = visual ? 240 : component.type === 'select3' ? 170 : 150;
+    const rows = Math.max(definition.inputs.length, definition.outputs.length, 1);
+    return { width, height: Math.max(visual ? 240 : 78, 48 + rows * 24) };
+  }
+
+  function autoLayoutCircuit() {
+    const components = [...circuit().components.values()];
+    if (!components.length) return setStatus('Auto layout: the circuit is empty.', true);
+    const definitionFor = (id) => registry.get(circuit().components.get(id).type);
+    const layer = new Map(components.map((component) => [component.id, 0]));
+    const incoming = new Map(components.map((component) => [component.id, 0]));
+    const outgoing = new Map(components.map((component) => [component.id, []]));
+    const predecessors = new Map(components.map((component) => [component.id, []]));
+
+    // A state boundary starts a new logical stage: feedback into it does not
+    // force its stored output into the same combinational layer.
+    for (const wire of circuit().wires.values()) {
+      const target = circuit().components.get(wire.to.componentId);
+      if (!target || definitionFor(target.id).breaksCombinationalPath) continue;
+      outgoing.get(wire.from.componentId)?.push(wire.to.componentId);
+      predecessors.get(wire.to.componentId)?.push(wire.from.componentId);
+      incoming.set(wire.to.componentId, (incoming.get(wire.to.componentId) || 0) + 1);
+    }
+    const order = (left, right) => left.y - right.y || left.x - right.x || left.id.localeCompare(right.id);
+    const queue = components.filter((component) => incoming.get(component.id) === 0).sort(order);
+    const processed = new Set();
+    while (queue.length) {
+      const component = queue.shift();
+      if (processed.has(component.id)) continue;
+      processed.add(component.id);
+      for (const nextId of outgoing.get(component.id) || []) {
+        layer.set(nextId, Math.max(layer.get(nextId) || 0, (layer.get(component.id) || 0) + 1));
+        incoming.set(nextId, incoming.get(nextId) - 1);
+        if (incoming.get(nextId) === 0) queue.push(circuit().components.get(nextId));
+      }
+      queue.sort(order);
+    }
+    // Invalid/imported cycles cannot block the editor; keep their nodes visible
+    // in the first column rather than leaving them unplaced.
+    for (const component of components) if (!processed.has(component.id)) layer.set(component.id, 0);
+
+    const columns = new Map();
+    for (const component of components) {
+      const index = layer.get(component.id) || 0;
+      if (!columns.has(index)) columns.set(index, []);
+      columns.get(index).push(component);
+    }
+    const indices = [...columns.keys()].sort((a, b) => a - b);
+    const sizes = new Map(components.map((component) => [component.id, componentLayoutSize(component)]));
+    const columnWidths = new Map(indices.map((index) => [index, Math.max(...columns.get(index).map((component) => sizes.get(component.id).width))]));
+    const horizontalGap = 115;
+    const totalWidth = indices.reduce((sum, index) => sum + columnWidths.get(index), 0) + horizontalGap * Math.max(0, indices.length - 1);
+    let x = -totalWidth / 2;
+    const placedY = new Map();
+    const positions = new Map();
+    for (const index of indices) {
+      const column = columns.get(index);
+      column.sort((left, right) => {
+        const average = (component) => {
+          const parents = predecessors.get(component.id) || [];
+          const ys = parents.map((id) => placedY.get(id)).filter(Number.isFinite);
+          return ys.length ? ys.reduce((sum, value) => sum + value, 0) / ys.length : component.y;
+        };
+        return average(left) - average(right) || order(left, right);
+      });
+      const verticalGap = 32;
+      const totalHeight = column.reduce((sum, component) => sum + sizes.get(component.id).height, 0) + verticalGap * Math.max(0, column.length - 1);
+      let y = -totalHeight / 2;
+      for (const component of column) {
+        positions.set(component.id, { x, y });
+        placedY.set(component.id, y + sizes.get(component.id).height / 2);
+        y += sizes.get(component.id).height + verticalGap;
+      }
+      x += columnWidths.get(index) + horizontalGap;
+    }
+
+    beginHistory('Auto layout by signal layers');
+    for (const component of components) {
+      const position = positions.get(component.id);
+      circuit().moveComponent(component.id, Math.round(position.x), Math.round(position.y));
+    }
+    commitHistory('Auto layout by signal layers');
+    renderer.select(null);
+    const bounds = [...positions.entries()].reduce((box, [id, position]) => {
+      const size = sizes.get(id);
+      return { left: Math.min(box.left, position.x), top: Math.min(box.top, position.y), right: Math.max(box.right, position.x + size.width), bottom: Math.max(box.bottom, position.y + size.height) };
+    }, { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity });
+    const padding = 80;
+    const scale = Math.max(0.25, Math.min(1.35, Math.min((renderer.app.screen.width - padding) / (bounds.right - bounds.left + padding), (renderer.app.screen.height - padding) / (bounds.bottom - bounds.top + padding))));
+    renderer.setViewState({ x: renderer.app.screen.width / 2 - ((bounds.left + bounds.right) / 2) * scale, y: renderer.app.screen.height / 2 - ((bounds.top + bounds.bottom) / 2) * scale, scale });
+    updateStats();
+    setStatus(`Auto layout arranged ${components.length} components in ${indices.length} signal layer${indices.length === 1 ? '' : 's'}.`);
+  }
+
   function undo() {
     const e = history.undo.pop(); if (!e) return;
     if (e.metadata?.addedCustom) {
@@ -954,7 +1052,7 @@
     const data = circuit().serialize();
     try {
       const boundaries = boundaryPorts(data);
-      if (!boundaries.inputs.length && !boundaries.outputs.length) throw new Error('A reusable component needs at least one Component Input or Component Output.');
+      if (!boundaries.inputs.length && !boundaries.outputs.length && !boundaries.display) throw new Error('A reusable component needs an input, signal output or visual output.');
       const cycle = customRecursionPath(current.customId, data);
       if (cycle) throw new Error(`Custom component recursion is not allowed: ${recursionMessage(cycle)}.`);
       meta.circuit = clone(data);
@@ -1186,6 +1284,8 @@
       projectSelect.appendChild(option);
     }
     if (currentProjectId) projectSelect.value = currentProjectId;
+    const deleteProjectBtn = $('deleteProjectBtn');
+    if (deleteProjectBtn) deleteProjectBtn.disabled = !currentProjectId;
   }
 
   async function saveProject({ quiet = false } = {}) {
@@ -1246,23 +1346,75 @@
     } catch (error) { setStatus(`Load failed: ${error.message}`, true); }
   }
 
-  async function createNewProject() {
-    await saveProject({ quiet: true });
-    navigation.length = 0;
-    clearCustomRegistry();
-    rootCircuit = new Circuit(registry);
-    currentProjectName = 'New project';
-    currentProjectId = makeProjectId(currentProjectName);
-    projectNameInput.value = currentProjectName;
-    testSuites = [];
-    primitiveExperiment.activeId = 'all';
-    primitiveExperiment.customTypes = new Set(EXPERIMENTAL_PRIMITIVES);
-    renderPrimitiveSetControls(); renderLibrary();
-    switchContext({ kind: 'root', label: 'Project', circuit: rootCircuit, customId: null });
-    resetHistory();
-    lastSavedSnapshot = '';
-    await saveProject({ quiet: true });
-    setStatus('Created a new project. Rename it in the project-name field; changes autosave.');
+  async function switchProject(id) {
+    const targetId = String(id || '');
+    if (!targetId || targetId === currentProjectId || projectActionBusy) return;
+    projectActionBusy = true;
+    try {
+      setStatus('Loading project…');
+      if (!saveCurrentCustomDefinition()) return;
+      await saveProject({ quiet: true });
+      await loadProject(targetId);
+    } catch (error) {
+      setStatus(`Could not switch project: ${error.message}`, true);
+    } finally {
+      projectActionBusy = false;
+    }
+  }
+
+  async function createNewProject({ saveCurrent = true } = {}) {
+    if (projectActionBusy) return;
+    projectActionBusy = true;
+    try {
+      setStatus('Creating new project…');
+      if (saveCurrent) {
+        if (!saveCurrentCustomDefinition()) return;
+        await saveProject({ quiet: true });
+      }
+      navigation.length = 0;
+      clearCustomRegistry();
+      rootCircuit = new Circuit(registry);
+      currentProjectName = 'New project';
+      currentProjectId = makeProjectId(currentProjectName);
+      projectNameInput.value = currentProjectName;
+      testSuites = [];
+      primitiveExperiment.activeId = 'all';
+      primitiveExperiment.customTypes = new Set(EXPERIMENTAL_PRIMITIVES);
+      renderPrimitiveSetControls(); renderLibrary();
+      switchContext({ kind: 'root', label: 'Project', circuit: rootCircuit, customId: null });
+      resetHistory();
+      lastSavedSnapshot = '';
+      await saveProject({ quiet: true });
+      setStatus('Created a new empty project. Rename it in the project-name field; changes autosave.');
+    } catch (error) {
+      setStatus(`Could not create project: ${error.message}`, true);
+    } finally {
+      projectActionBusy = false;
+    }
+  }
+
+  async function deleteCurrentProject() {
+    if (current.kind !== 'root') return setStatus('Return to Project before deleting a project.', true);
+    if (!currentProjectId) return setStatus('There is no saved project to delete.', true);
+    const id = currentProjectId;
+    const name = currentProjectName;
+    if (!window.confirm(`Delete project “${name}”? This removes its locally saved circuit, components and tests.`)) return;
+    try {
+      await storage.remove(id);
+      const remaining = await storage.list();
+      if (remaining.length) {
+        const next = remaining[0];
+        applyProject(next.project, { id: next.id, savedAt: next.savedAt });
+        setStatus(`Deleted “${name}”. Loaded “${next.project?.projectName || next.id}”.`);
+      } else {
+        currentProjectId = null;
+        await storage.setMeta('lastProjectId', null);
+        await createNewProject({ saveCurrent: false });
+        setStatus(`Deleted “${name}”. Created a new empty project.`);
+      }
+    } catch (error) {
+      setStatus(`Could not delete project: ${error.message}`, true);
+    }
   }
 
   function exportProject() {
@@ -1336,6 +1488,8 @@
     if ($('demoSelect').value === 'register-bank') return buildRegisterBankDemo();
     if ($('demoSelect').value === 'device-cells') return buildDeviceCellsDemo();
     if ($('demoSelect').value === 'seven-segment') return buildSevenSegmentDemo();
+    if ($('demoSelect').value === 'one-trit-display') return buildOneTritDisplayDemo();
+    if ($('demoSelect').value === 'three-trit-display') return buildThreeTritDisplayDemo();
     if ($('demoSelect').value === 'structural-storage') return buildStructuralStorageDemo();
     const label = uniqueName('Ternary Full Adder', [...customComponents.values()].map((meta) => meta.label), 'Ternary Full Adder');
     const id = `${slug(label)}-${Date.now().toString(36)}`;
@@ -1607,6 +1761,127 @@
     });
     renderer.select(null); renderLibrary(); updateStats(); resetHistory();
     setStatus('7-segment display loaded. Each A–G/Sign input uses 0 for off and +1 for on. Select an input to change it quickly in the Inspector.');
+  }
+
+  function buildOneTritDisplayDemo() {
+    // The display boundary is deliberately two-state, but the decoder itself is
+    // ternary: Threshold3 splits the input into -1 / 0 / +1 rails.
+    const label = uniqueName('1-trit signed display decoder', [...customComponents.values()].map((meta) => meta.label), '1-trit signed display decoder');
+    const id = `${slug(label)}-${Date.now().toString(36)}`;
+    const inner = new Circuit(registry);
+    const input = inner.addComponent('component-input', -330, 0, { name: 'in' });
+    const detector = inner.addComponent('threshold3', -130, 0, { label: 'Input detector' });
+    const known = inner.addComponent('max', 45, -45, { label: 'Known: -1 OR 0' });
+    const knownAll = inner.addComponent('max', 190, -45, { label: 'Known: valid trit' });
+    const off = inner.addComponent('min', 45, 95, { label: 'Off: -1 AND 0' });
+    const display = inner.addComponent('component-seven-segment-display', 400, 0, { label: 'Signed digit display' });
+    inner.connect(input.id, 'out', detector.id, 'in');
+    inner.connect(detector.id, 'neg', known.id, 'a');
+    inner.connect(detector.id, 'zero', known.id, 'b');
+    inner.connect(known.id, 'out', knownAll.id, 'a');
+    inner.connect(detector.id, 'pos', knownAll.id, 'b');
+    inner.connect(detector.id, 'neg', off.id, 'a');
+    inner.connect(detector.id, 'zero', off.id, 'b');
+    // -1 and +1 both show the digit 1; only -1 activates the sign segment.
+    ['b', 'c'].forEach((port) => inner.connect(knownAll.id, 'out', display.id, port));
+    ['a', 'd', 'e', 'f'].forEach((port) => inner.connect(detector.id, 'zero', display.id, port));
+    inner.connect(off.id, 'out', display.id, 'g');
+    inner.connect(detector.id, 'neg', display.id, 'sign');
+    const meta = {
+      id, type: `custom:${id}`, label, circuit: inner.serialize(),
+      experiment: {
+        role: 'gate-level display experiment', nodeCount: 4, depth: 3, primitiveCounts: { threshold3: 1, min: 1, max: 2 },
+        metrics: { nodes: 4, depth: 3, wires: inner.wires.size, transitions: 0, transitionScenario: 'static decode; dynamic transition count intentionally not measured yet' },
+        rationale: 'Threshold3 turns the input into one-hot rails. The zero rail forms 0, MAX combines the three valid rails for the two segments in 1, and MIN creates the always-off middle segment.',
+        validation: 'Exhaustive 3/3 inputs: -1 displays -1, 0 displays 0, and +1 displays +1.',
+      },
+    };
+    customComponents.set(id, meta); registerCustom(meta);
+    const control = rootCircuit.addComponent('trit-input', -310, 0, { value: 0, label: 'Input trit' });
+    const decoder = rootCircuit.addComponent(meta.type, 0, -105, { label });
+    rootCircuit.connect(control.id, 'out', decoder.id, 'in');
+    renderer.select(null); renderLibrary(); updateStats(); resetHistory();
+    setStatus('1-trit display decoder loaded. Change Input trit: -1 shows -1, 0 shows 0 and +1 shows +1. Open internals to inspect Threshold3, MIN and MAX.');
+  }
+
+  function buildThreeTritDisplayDemo() {
+    // Fixed-range decoder for -9…+9. Every match is built from three one-hot
+    // detector rails, then segments are ORed together with MAX gates.
+    const label = uniqueName('3-trit signed display decoder', [...customComponents.values()].map((meta) => meta.label), '3-trit signed display decoder');
+    const id = `${slug(label)}-${Date.now().toString(36)}`;
+    const inner = new Circuit(registry);
+    const inputNames = ['t9', 't3', 't1'];
+    const inputs = inputNames.map((name, index) => inner.addComponent('component-input', -620, (index - 1) * 90, { name }));
+    const detectors = inputNames.map((name, index) => {
+      const detector = inner.addComponent('threshold3', -410, (index - 1) * 90, { label: `${name} detector` });
+      inner.connect(inputs[index].id, 'out', detector.id, 'in');
+      return detector;
+    });
+    const display = inner.addComponent('component-seven-segment-display', 430, 0, { label: 'Decimal display' });
+    const counts = { threshold3: 3, min: 0, max: 0 };
+    const rail = (digit, position) => digit < 0 ? 'neg' : digit > 0 ? 'pos' : 'zero';
+    const balancedDigits = (value) => {
+      const digits = [];
+      let remaining = value;
+      for (let index = 0; index < 3; index++) {
+        const remainder = ((remaining % 3) + 3) % 3;
+        const digit = remainder === 2 ? -1 : remainder;
+        digits.unshift(digit);
+        remaining = (remaining - digit) / 3;
+      }
+      return digits;
+    };
+    const terms = new Map();
+    for (let value = -9; value <= 9; value++) {
+      const digits = balancedDigits(value);
+      const first = inner.addComponent('min', -170, value * 20, { label: `match ${value}` }); counts.min++;
+      const second = inner.addComponent('min', 20, value * 20, { label: `match ${value}` }); counts.min++;
+      inner.connect(detectors[0].id, rail(digits[0], 0), first.id, 'a');
+      inner.connect(detectors[1].id, rail(digits[1], 1), first.id, 'b');
+      inner.connect(first.id, 'out', second.id, 'a');
+      inner.connect(detectors[2].id, rail(digits[2], 2), second.id, 'b');
+      terms.set(value, second);
+    }
+    const segments = {
+      0: ['a', 'b', 'c', 'd', 'e', 'f'], 1: ['b', 'c'], 2: ['a', 'b', 'd', 'e', 'g'],
+      3: ['a', 'b', 'c', 'd', 'g'], 4: ['b', 'c', 'f', 'g'], 5: ['a', 'c', 'd', 'f', 'g'],
+      6: ['a', 'c', 'd', 'e', 'f', 'g'], 7: ['a', 'b', 'c'], 8: ['a', 'b', 'c', 'd', 'e', 'f', 'g'], 9: ['a', 'b', 'c', 'd', 'f', 'g'],
+    };
+    const orTerms = (name, values) => {
+      let current = terms.get(values[0]);
+      for (let index = 1; index < values.length; index++) {
+        const gate = inner.addComponent('max', 170 + index * 45, values[0] * 8 + name.charCodeAt(0), { label: `${name} OR` }); counts.max++;
+        inner.connect(current.id, 'out', gate.id, 'a'); inner.connect(terms.get(values[index]).id, 'out', gate.id, 'b'); current = gate;
+      }
+      return current;
+    };
+    for (const segment of ['a', 'b', 'c', 'd', 'e', 'f', 'g']) {
+      const values = [];
+      for (let value = -9; value <= 9; value++) if (segments[Math.abs(value)].includes(segment)) values.push(value);
+      const source = orTerms(segment, values); inner.connect(source.id, 'out', display.id, segment);
+    }
+    const sign = orTerms('sign', [-9, -8, -7, -6, -5, -4, -3, -2, -1]);
+    inner.connect(sign.id, 'out', display.id, 'sign');
+    const nodeCount = counts.threshold3 + counts.min + counts.max;
+    const meta = {
+      id, type: `custom:${id}`, label, circuit: inner.serialize(),
+      experiment: {
+        role: 'gate-level display experiment', nodeCount, depth: 19, primitiveCounts: counts,
+        metrics: { nodes: nodeCount, depth: 19, wires: inner.wires.size, transitions: 0, transitionScenario: 'static decode; dynamic transition count intentionally not measured yet' },
+        rationale: 'Threshold3 creates one-hot rails for each balanced trit. Two MIN gates form each exact three-trit match; MAX trees combine matching values into A–G and Sign.',
+        validation: 'Covers all 27 input words: -9…+9 render decimal digits; -13…-10 and +10…+13 remain blank.',
+      },
+    };
+    customComponents.set(id, meta); registerCustom(meta);
+    const controls = [
+      rootCircuit.addComponent('trit-input', -420, -85, { value: 1, label: '9s trit' }),
+      rootCircuit.addComponent('trit-input', -420, 0, { value: 0, label: '3s trit' }),
+      rootCircuit.addComponent('trit-input', -420, 85, { value: 0, label: '1s trit' }),
+    ];
+    const decoder = rootCircuit.addComponent(meta.type, 0, -105, { label });
+    controls.forEach((control, index) => rootCircuit.connect(control.id, 'out', decoder.id, inputNames[index]));
+    renderer.select(null); renderLibrary(); updateStats(); resetHistory();
+    setStatus(`3-trit display decoder loaded (${nodeCount} gate nodes). Change the 9s, 3s and 1s trits; it displays -9…+9 and blanks the remaining eight codes. Open internals to inspect the gate network.`);
   }
 
   function buildStructuralStorageDemo() {
@@ -1888,7 +2163,8 @@
     await renderer.init();
     renderer.setViewState({ x: renderer.app.screen.width / 2, y: renderer.app.screen.height / 2, scale: 1 });
 
-    $('newProjectBtn').addEventListener('click', createNewProject);
+    $('newProjectBtn').addEventListener('click', () => createNewProject());
+    $('deleteProjectBtn').addEventListener('click', deleteCurrentProject);
     $('newComponentBtn').addEventListener('click', createCustomComponent);
     primitiveSetSelect.addEventListener('change', () => {
       primitiveExperiment.activeId = primitiveSetSelect.value;
@@ -1899,7 +2175,7 @@
     backBtn.addEventListener('click', goBack);
     $('saveBtn').addEventListener('click', () => saveProject());
     $('loadBtn').addEventListener('click', () => loadProject());
-    projectSelect.addEventListener('change', () => loadProject(projectSelect.value));
+    projectSelect.addEventListener('change', () => switchProject(projectSelect.value));
     projectNameInput.addEventListener('change', () => { currentProjectName = sanitizeProjectName(projectNameInput.value); projectNameInput.value = currentProjectName; autosaveIfChanged(); });
     $('exportBtn').addEventListener('click', exportProject);
     $('importBtn').addEventListener('click', () => importFile.click());
@@ -1907,6 +2183,7 @@
     $('demoBtn').addEventListener('click', buildDemo);
     undoBtn.addEventListener('click', undo); redoBtn.addEventListener('click', redo);
     copyBtn.addEventListener('click', copySelection); pasteBtn.addEventListener('click', pasteSelection);
+    $('autoLayoutBtn').addEventListener('click', autoLayoutCircuit);
     deleteBtn.addEventListener('click', () => renderer.deleteSelection());
     $('clearBtn').addEventListener('click', () => {
       beginHistory('Clear workspace'); circuit().clear(); renderer.select(null); updateStats(); commitHistory('Clear workspace'); setStatus('Workspace cleared.');

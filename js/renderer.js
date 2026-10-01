@@ -48,7 +48,7 @@
     const horizontal = (name, y) => graphics.roundRect(left + 10, y, right - left - 20, 9, 3).fill(displaySegmentColor(inputs[name]));
     const vertical = (name, x, y) => graphics.roundRect(x, y, 9, 32, 3).fill(displaySegmentColor(inputs[name]));
     graphics.clear()
-      .roundRect(left - 54, 50, right - left + 46, 126, 9).fill(0x0a0d12).stroke({ color: 0x485568, width: 1 });
+      .roundRect(left - 54, 50, right - left + 62, 126, 9).fill(0x0a0d12).stroke({ color: 0x485568, width: 1 });
     horizontal('a', 58); vertical('f', left, 68); vertical('b', right - 9, 68);
     horizontal('g', 108); vertical('e', left, 118); vertical('c', right - 9, 118); horizontal('d', 158);
     graphics.roundRect(left - 42, 109, 25, 7, 3).fill(displaySegmentColor(inputs.sign));
