@@ -38,7 +38,7 @@
       </div>
       <input id="importFile" type="file" accept="application/json,.json" hidden />
       <div class="toolbar-group utility-actions" aria-label="Other actions">
-        <select id="demoSelect" aria-label="Demo example"><option value="full-adder">Full adder</option><option value="compare">Compare</option></select>
+        <select id="demoSelect" aria-label="Demo example"><option value="full-adder">Full adder reference</option><option value="adder-comparison">Adder comparison</option><option value="primitive-set-comparison">Primitive set comparison</option><option value="comparator-comparison">Comparator comparison</option><option value="selector-router">Selector / router</option><option value="control-signals">Ternary control signals</option><option value="sequential-storage">Ternary latch / register</option><option value="register-bank">Ternary register bank</option><option value="device-cells">Ternary device cells</option><option value="seven-segment">7-segment display</option><option value="structural-storage">Structural latch / register</option><option value="compare">Compare</option></select>
         <button id="demoBtn">Load demo</button>
       </div>
       <div class="toolbar-group danger-actions" aria-label="Destructive actions">
@@ -82,6 +82,8 @@
         <div><span class="dot neg"></span>-1</div>
         <div><span class="dot zero"></span>0</div>
         <div><span class="dot pos"></span>+1</div>
+        <div><span class="dot floating"></span>Z (floating)</div>
+        <div><span class="dot unknown"></span>? (unknown)</div>
       </div>
     </aside>
 
@@ -136,6 +138,10 @@
       <div class="queue-inspector">
         <div class="queue-header"><strong>Event queue</strong><span id="queueCount">0</span></div>
         <div id="queueList" class="queue-list"><div class="queue-empty">No queued events.</div></div>
+      </div>
+      <div class="queue-inspector state-timeline">
+        <div class="queue-header"><strong>State timeline</strong><button id="clearTimelineBtn" type="button">Clear</button></div>
+        <div id="stateTimeline" class="queue-list"><div class="queue-empty">No state events.</div></div>
       </div>
 
       <div class="stats" id="stats">

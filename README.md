@@ -21,7 +21,7 @@ You can also run in NodeJs with **npx serve . -l 3000**
 
 ## Signal states
 
-`-1`, `0` and `+1` are logical ternary values. An unconnected or unresolved port is shown as `?`, rather than being treated as logical zero. Connecting a wire that would create a combinational feedback loop is rejected; sequential feedback will be introduced later with explicit stateful components.
+`-1`, `0` and `+1` are driven logical ternary values. `?` means unknown or unresolved. `Z` means a pass switch deliberately does not drive the wire (floating); ordinary logic needs a driven input and therefore returns `?` for `Z`. A purely combinational feedback loop is rejected. A loop is allowed only when its path crosses an explicitly declared stateful component, such as `Storage node` or a structural latch that contains one.
 
 ## Reusable / hierarchical components
 
@@ -52,9 +52,11 @@ The direct self-reference of a component is hidden while editing that component.
 
 Custom components are real circuit definitions, not visual groups. Their public ports are derived from the `Component Input` and `Component Output` boundary blocks. During simulation, a custom block evaluates its internal circuit, so nested custom components work recursively.
 
-For now custom components are intended for combinational logic. Sequential/stateful custom-component runtime semantics will be designed with Phase 15.
+Reusable components retain a separate serialized internal runtime for every placed instance. This means a nested `storage-node3` or other stateful primitive holds its value between evaluations without leaking state to another instance. Saving a changed reusable definition increments its runtime version, so existing instances safely reinitialize from the new structure.
 
 ## Project files
+
+Phase 12 component decisions and the CPU control-signal audit are recorded in [DESIGN.md](DESIGN.md).
 
 - `index.html` — static application shell
 - `styles.css` — application styling
@@ -85,11 +87,33 @@ Saved component tests live below the input/output controls while editing a reusa
 
 Before saving a test, set its expected output values explicitly in **Expected outputs for next saved case**. If a later edit removes a port used by a saved test, the runner reports that its component contract changed instead of silently treating the test as valid.
 
-Use **Demo** to create a reusable ternary Full Adder with `a`, `b`, `c` inputs and `sum`, `carry` outputs. Its saved suite covers all 27 ternary input combinations.
+Use **Demo** to load a self-contained experiment. Loading any demo replaces the root circuit, reusable-component library and saved component tests, so the selected demo is always shown on its own. The Full Adder reference has `a`, `b`, `c` inputs and `sum`, `carry` outputs; its saved suite covers all 27 ternary input combinations.
+
+## Phase 12 adder experiments
+
+`Normalize / carry` is the reference full-adder implementation. Every alternative must expose the same `a`, `b`, `c` → `sum`, `carry` contract and pass the same 27 saved cases before it is considered a candidate. Record its primitive set, node count and design rationale alongside the component; do not replace the reference implementation.
+
+Choose **Adder comparison** in the Demo menu to create three saved full-adder implementations: a one-node Normalize reference, an a+b cascaded-normalize construction, and a b+c pairwise cascade. All have the same exhaustive 27-case suite. Selecting an instance shows its primitive inventory, logical node count, critical depth and rationale in the Inspector; comparison is intentionally limited to logical structure and behavior.
+
+Choose **Primitive set comparison** in the Demo menu to create a full-adder baseline for every current preset set. The result is deliberately recorded rather than hidden: every current set includes `Normalize / carry`, so all four implement the contract in one primitive node and pass the same 27 cases. Their extra primitives are therefore not a full-adder advantage yet; they remain candidates for the following comparator, selector and control experiments.
+
+Choose **Comparator comparison** in the Demo menu to compare a direct `Compare` reference with normalized-difference candidates. The candidate creates a stable zero using `Normalize(a,a,a).sum`, normalizes `a-b`, and uses `Select3` to preserve the sign across a normalized overflow. Each comparator has the `a`, `b` → `out` contract and an exhaustive 9-case suite.
+
+Choose **Selector / router** to inspect `Select3` (`neg, zero, pos, select → out`) and its reciprocal `Route3` (`in, select → neg, zero, pos`). Their saved suites cover 81 and 9 cases. Inactive Route3 paths are deliberately driven to zero.
+
+Choose **Ternary control signals** to test `Adjust3`: `-1 / 0 / +1` means decrement / hold / increment and exposes carry for a multi-trit program counter. The same demo also records `-1 / 0 / +1` as read / idle / write. That action remains one packed trit; its three one-hot outputs are an explicit adapter only when separate downstream paths require it.
+
+This is the design decision for the CPU path: retain the packed control trit through the datapath and only decode it at an explicit downstream branch. `Adjust3` is the intended PC/running-counter primitive; `Control3 decode` is intentionally not a general replacement for ternary control, but the boundary adapter for distinct read, idle and write hardware paths.
 
 Component and test-case names are unique within their respective project scopes. If a name is already used, Ternary Lab assigns the next available suffix, such as `Adder 2`.
 
 Component Input and Component Output ports are named uniquely as soon as they are added: `in`, `in 2`, … and `out`, `out 2`, …. Renaming a port uses the same rule.
+
+## Ternary sequential storage
+
+Choose **Ternary latch / register** in the Demo menu to load the storage experiment. The **Ternary latch** is transparent only while `enable = +1`; `0` and `-1` hold its current trit. The **Ternary register** is a hardware-like D flip-flop: it captures `d` only when `load = +1` and `clock` transitions from `0` to `+1`. Changing data while the clock stays high does not alter `q`. A new storage element begins as `?` until reset is clocked.
+
+The demo uses ordinary Trit Inputs for `D`, `LOAD`, `CLK` and `RESET`: set `D` and `LOAD` to `+1`, then change `CLK` from `0` to `+1`. The register updates automatically; there is no simulator-only commit control. Use `0` before the next pulse. Reset is synchronous: set reset to `+1` and provide a rising clock edge to restore the initial value `0`.
 
 ## v12 simulation controls and sequence generators
 
@@ -121,7 +145,7 @@ The legacy `Clock` type is retained internally so older saved projects can still
 
 ## v13 primitive experiments
 
-The primitive library can now be switched between experiment sets without invalidating existing circuits. Current candidate primitives include `MIN`, `MAX`, and `Normalize / carry` (`A+B+C = Sum + 3×Carry`). Each candidate carries logical-cost metadata and a physical-cost record. Physical transistor/delay/power values intentionally remain `unmodeled` until a concrete hardware implementation is selected.
+The primitive library can now be switched between experiment sets without invalidating existing circuits. Current candidate primitives include `MIN`, `MAX`, and `Normalize / carry` (`A+B+C = Sum + 3×Carry`). Each candidate carries logical structural metadata. The project deliberately does not estimate transistor count, voltage encoding, delay or power.
 
 Preset sets include **All candidates**, **MIN / MAX**, **Compare / Select**, **Arithmetic core**, plus a **Custom experiment** assembled with checkboxes. The active experiment is saved with the project.
 
@@ -137,3 +161,20 @@ Projects are stored locally in the browser with IndexedDB. The active project is
 - **Import JSON** imports older/current project files and stores the imported project locally.
 - Primitive-set selection, reusable components and the test-suite storage slot are part of the project format.
 - Project format version 6 includes a migration entry point so older project data can be upgraded when loaded.
+
+
+## Technology-neutral device cells
+
+Signal states are distinct: `-1`, `0` and `+1` are driven logic levels; `?` means unknown/unresolved; `Z` means a switch deliberately drives no value (floating). In this single-driver simulator, ordinary logic and a restorer treat `Z` as unavailable and return `?`.
+
+Choose **Structural latch / register** to compare behavioral reference blocks with their opening structural versions. Select **Register — two structural latches**, choose **Open internals**, then open either latch to reach its restorer, pass switch and storage node. The shared input controls drive both versions, so their probes can be compared directly. The Inspector gives the same comparison dimensions for every option: nodes, depth, wires and canonical write transitions.
+
+Choose **Ternary device cells** to explore the new lower abstraction layer. **Ternary restorer**, **Ternary level detector**, **Ternary pass switch** and **Ternary storage node** are ideal structural cells: they define level restoration, detection, gated transmission and retention without choosing a transistor technology. A disabled pass switch emits `Z`; this is distinct from an unresolved `?`.
+
+## 7-segment output
+
+Choose **7-segment display** to load a visible output component with eight independent inputs: `A`–`G` and `Sign`. This peripheral intentionally uses two-state control: `0` means off and `+1` means on. A `-1`, `?` or `Z` input is rendered as an invalid segment state instead of silently becoming off. The display contains no number decoder; the future ternary decoder will be a separate, openable logic component that drives these eight ports. When editing a reusable component, choose **7-segment Output** under **Component interface** to make this visual display the component’s visible output; connect internal logic to its A–G/Sign ports.
+
+## Register bank
+
+**Ternary register bank** demo provides three stored trits addressed by `-1 / 0 / +1`. Its action input is `-1 = read`, `0 = idle`, `+1 = write`; a write occurs on the clock rising edge when action is `+1`.

@@ -3,13 +3,22 @@
 
   const TRITS = Object.freeze([-1, 0, 1]);
   const UNKNOWN = null;
+  const FLOATING = 'Z';
   const clone = (obj) => JSON.parse(JSON.stringify(obj));
   const isUnknown = (value) => value === null || value === undefined;
-  const trit = (value) => isUnknown(value) ? UNKNOWN : Number(value) < 0 ? -1 : Number(value) > 0 ? 1 : 0;
+  const isFloating = (value) => value === FLOATING;
+  const isKnownTrit = (value) => !isUnknown(value) && !isFloating(value);
+  const trit = (value) => isUnknown(value) ? UNKNOWN : isFloating(value) ? FLOATING : Number(value) < 0 ? -1 : Number(value) > 0 ? 1 : 0;
 
-  const hasGraphCycle = (wires) => {
+  // A declared state boundary retains a value between evaluations. Its output can
+  // therefore feed a later combinational path back to its input without making the
+  // combinational graph cyclic. All other feedback remains invalid.
+  const breaksCombinationalPath = (component, registry) => Boolean(component && registry.get(component.type)?.breaksCombinationalPath);
+  const hasGraphCycle = (wires, components, registry) => {
     const outgoing = new Map();
     for (const wire of wires) {
+      const source = components.get(wire.from.componentId);
+      if (breaksCombinationalPath(source, registry)) continue;
       if (!outgoing.has(wire.from.componentId)) outgoing.set(wire.from.componentId, []);
       outgoing.get(wire.from.componentId).push(wire.to.componentId);
     }
@@ -83,10 +92,7 @@
       if (!replace && this.definitions.has(definition.type)) throw new Error(`Duplicate component type: ${definition.type}`);
       this.definitions.set(definition.type, {
         label: definition.type, inputs: [], outputs: [], candidate: false, category: 'utility',
-        cost: {
-          logical: { nodes: 1, depth: 1 },
-          physical: { model: 'unmodeled', transistorEstimate: null, delayUnits: null, staticPowerUnits: null },
-        },
+        cost: { logical: { nodes: 1, depth: 1 } },
         ...definition,
       });
       return this.definitions.get(definition.type);
@@ -120,6 +126,44 @@
       this.propagationSequence = 1;
       this.propagationStepsSinceSettle = 0;
       this.generatorElapsed = new Map();
+      // Sequential components stage their next state while combinational logic settles.
+      // A commit applies every staged change together at a clock boundary.
+      this.pendingStateCommits = new Map();
+    }
+
+    getStagedState(componentId) {
+      const component = this.components.get(componentId);
+      return { ...(component?.state || {}), ...(this.pendingStateCommits.get(componentId) || {}) };
+    }
+
+    stageStateCommit(componentId, patch) {
+      const component = this.components.get(componentId);
+      if (!component || !patch) return false;
+      const next = { ...this.getStagedState(componentId), ...clone(patch) };
+      const current = this.getStagedState(componentId);
+      if (JSON.stringify(next) === JSON.stringify(current)) return false;
+      this.pendingStateCommits.set(componentId, next);
+      this.events.emit('state-staged', { componentId, patch: clone(patch), pendingCount: this.pendingStateCommits.size });
+      return true;
+    }
+
+    getPendingStateCommitCount() { return this.pendingStateCommits.size; }
+
+    flushSequentialState() {
+      const staged = [...this.pendingStateCommits.entries()];
+      this.pendingStateCommits.clear();
+      const changes = [];
+      for (const [componentId, nextState] of staged) {
+        const component = this.components.get(componentId);
+        if (!component || JSON.stringify(component.state) === JSON.stringify(nextState)) continue;
+        const before = clone(component.state);
+        component.state = clone(nextState);
+        changes.push({ componentId, before, after: clone(component.state) });
+        this.events.emit('component-state', component);
+        this.enqueuePropagation(componentId, 'clocked state update');
+      }
+      if (changes.length) this.events.emit('state-committed', { changes: clone(changes) });
+      return changes.length;
     }
 
     addComponent(type, x = 0, y = 0, state = {}) {
@@ -146,6 +190,7 @@
       const component = this.components.get(id);
       this.components.delete(id);
       this.generatorElapsed.delete(id);
+      this.pendingStateCommits.delete(id);
       this.propagationQueued.delete(id);
       this.propagationQueue = this.propagationQueue.filter((event) => event.componentId !== id);
       this.events.emit('component-removed', component);
@@ -183,7 +228,7 @@
       const toDef = this.registry.get(toComponent.type);
       if (!fromDef.outputs.includes(fromPort)) throw new Error(`${fromPort} is not an output.`);
       if (!toDef.inputs.includes(toPort)) throw new Error(`${toPort} is not an input.`);
-      if (fromComponentId === toComponentId) throw new Error('Self-connections are not allowed.');
+      if (fromComponentId === toComponentId && !breaksCombinationalPath(fromComponent, this.registry)) throw new Error('Self-connections require a declared storage cell.');
 
       const existing = [...this.wires.values()].find((wire) => wire.to.componentId === toComponentId && wire.to.port === toPort);
       if (this.wouldCreateCombinationalLoop(fromComponentId, toComponentId, existing?.id)) {
@@ -202,9 +247,12 @@
     }
 
     wouldCreateCombinationalLoop(fromComponentId, toComponentId, ignoredWireId = null) {
+      if (fromComponentId === toComponentId && breaksCombinationalPath(this.components.get(fromComponentId), this.registry)) return false;
       const outgoing = new Map();
       for (const wire of this.wires.values()) {
         if (wire.id === ignoredWireId) continue;
+        const source = this.components.get(wire.from.componentId);
+        if (breaksCombinationalPath(source, this.registry)) continue;
         if (!outgoing.has(wire.from.componentId)) outgoing.set(wire.from.componentId, []);
         outgoing.get(wire.from.componentId).push(wire.to.componentId);
       }
@@ -342,6 +390,7 @@
       const result = { ...event, component, changedOutputs, queueLength: this.propagationQueue.length };
       this.events.emit('propagation-step', result);
 
+      if (!this.propagationQueue.length && this.pendingStateCommits.size) this.flushSequentialState();
       if (!this.propagationQueue.length) {
         const steps = this.propagationStepsSinceSettle;
         this.stats.lastSteps = steps;
@@ -384,8 +433,12 @@
     clockStep() {
       const generators = [...this.components.values()]
         .filter((component) => component.type === 'sequence-generator' || component.type === 'clock');
+      const mode = this.executionMode;
+      this.executionMode = 'manual';
       for (const generator of generators) this.advanceSequenceGenerator(generator, 'clock step');
-      this.events.emit('clock-step', { clocks: generators.map((generator) => generator.id) });
+      this.executionMode = mode;
+      if (mode === 'instant' && this.propagationQueue.length) this.simulate();
+      this.events.emit('clock-step', { clocks: generators.map((generator) => generator.id), pendingCommits: this.getPendingStateCommitCount() });
       return generators.length;
     }
 
@@ -418,6 +471,7 @@
       this.nextComponentId = 1; this.nextWireId = 1;
       this.stats = { evaluations: 0, signalChanges: 0, lastSteps: 0 };
       this.generatorElapsed.clear();
+      this.pendingStateCommits.clear();
       this.clearPropagationQueue();
       this.events.emit('cleared');
     }
@@ -437,7 +491,7 @@
         const targetDef = this.registry.get(target.type);
         return sourceDef.outputs.includes(wire.from?.port) && targetDef.inputs.includes(wire.to?.port);
       });
-      if (hasGraphCycle(validWires)) throw new Error('Circuit contains a combinational feedback loop.');
+      if (hasGraphCycle(validWires, rawComponents, this.registry)) throw new Error('Circuit contains a combinational feedback loop.');
       this.clear();
       let maxComponent = 0;
       for (const raw of data.components || []) {
@@ -488,6 +542,7 @@
   function boundaryPorts(circuitData) {
     const inputs = [];
     const outputs = [];
+    const displays = [];
     const usedInputs = new Set();
     const usedOutputs = new Set();
     for (const component of circuitData.components || []) {
@@ -501,13 +556,18 @@
         if (!name) throw new Error('Component Output needs a name.');
         if (usedOutputs.has(name)) throw new Error(`Duplicate component output name: ${name}`);
         usedOutputs.add(name); outputs.push({ name, componentId: component.id });
+      } else if (component.type === 'component-seven-segment-display') {
+        displays.push({ componentId: component.id });
       }
     }
-    return { inputs, outputs };
+    if (displays.length > 1) throw new Error('A reusable component can have only one 7-segment display output.');
+    return { inputs, outputs, display: displays[0] || null };
   }
 
   function makeCustomDefinition(meta, registry) {
     const boundaries = boundaryPorts(meta.circuit);
+    const runtimeVersion = Math.max(1, Number(meta.runtimeVersion) || 1);
+    const breaksPath = (meta.circuit.components || []).some((component) => registry.get(component.type)?.breaksCombinationalPath);
     return {
       type: meta.type,
       label: meta.label,
@@ -515,10 +575,17 @@
       outputs: boundaries.outputs.map((p) => p.name),
       custom: true,
       customId: meta.id,
+      visual: boundaries.display ? { kind: 'seven-segment', componentId: boundaries.display.componentId } : null,
+      breaksCombinationalPath: breaksPath,
       circuit: clone(meta.circuit),
+      defaultState: { runtimeVersion, runtime: null },
       evaluate(component) {
+        // Runtime belongs to this *instance*, rather than the reusable definition.
+        // It lets nested storage cells retain state and makes multiple instances independent.
         const inner = new Circuit(registry);
-        inner.load(meta.circuit);
+        const canRestore = component.state.runtime && Number(component.state.runtimeVersion) === runtimeVersion;
+        try { inner.load(canRestore ? component.state.runtime : meta.circuit); }
+        catch (_) { inner.load(meta.circuit); }
         for (const input of boundaries.inputs) inner.setState(input.componentId, { value: trit(component.inputs[input.name]) });
         inner.simulate();
         const result = {};
@@ -526,12 +593,18 @@
           const boundary = inner.components.get(output.componentId);
           result[output.name] = trit(boundary?.state?.value);
         }
+        if (boundaries.display) {
+          const display = inner.components.get(boundaries.display.componentId);
+          component.state.displaySegments = Object.fromEntries(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'sign'].map((name) => [name, trit(display?.inputs?.[name])]));
+        }
+        component.state.runtimeVersion = runtimeVersion;
+        component.state.runtime = inner.serialize();
         return result;
       },
     };
   }
 
-  const needsKnownInputs = (component, names) => names.every((name) => !isUnknown(component.inputs[name]));
+  const needsKnownInputs = (component, names) => names.every((name) => isKnownTrit(component.inputs[name]));
 
   const registry = new ComponentRegistry();
 
@@ -553,16 +626,72 @@
     },
     evaluate: (c) => ({ out: trit(c.state.value) }),
   });
-  const experimentalCost = (notes = '') => ({
-    logical: { nodes: 1, depth: 1 },
-    // Physical values are intentionally unknown until a concrete transistor/comparator
-    // implementation is chosen. Keeping null is better than inventing hardware numbers.
-    physical: { model: 'unmodeled', transistorEstimate: null, delayUnits: null, staticPowerUnits: null, notes },
+  // Stateful primitives own their state per circuit component instance. They do not
+  // feed their output back through combinational wires, so the graph remains acyclic.
+  registry.register({
+    type: 'latch3', label: 'Ternary latch', category: 'storage', breaksCombinationalPath: true,
+    inputs: ['d', 'enable', 'reset'], outputs: ['q'], defaultState: { value: UNKNOWN, initialValue: 0 },
+    evaluate(c, { circuit }) {
+      const reset = trit(c.inputs.reset), enable = trit(c.inputs.enable);
+      if (reset === 1) circuit.stageStateCommit(c.id, { value: trit(c.state.initialValue) });
+      else if (enable === 1 && isKnownTrit(c.inputs.d)) circuit.stageStateCommit(c.id, { value: trit(c.inputs.d) });
+      return { q: reset === 1 ? trit(c.state.initialValue) : enable === 1 && isKnownTrit(c.inputs.d) ? trit(c.inputs.d) : trit(c.state.value) };
+    },
   });
+  registry.register({
+    type: 'register3', label: 'Ternary register', category: 'storage', breaksCombinationalPath: true,
+    inputs: ['d', 'load', 'clock', 'reset'], outputs: ['q'], defaultState: { value: UNKNOWN, initialValue: 0, previousClock: 0 },
+    evaluate(c, { circuit }) {
+      const clock = trit(c.inputs.clock), load = trit(c.inputs.load), reset = trit(c.inputs.reset), staged = circuit.getStagedState(c.id);
+      if (isKnownTrit(clock)) {
+        const risingEdge = trit(staged.previousClock) !== 1 && clock === 1;
+        const patch = { previousClock: clock };
+        if (risingEdge && reset === 1) patch.value = trit(c.state.initialValue);
+        else if (risingEdge && load === 1 && isKnownTrit(c.inputs.d)) patch.value = trit(c.inputs.d);
+        circuit.stageStateCommit(c.id, patch);
+      }
+      return { q: trit(c.state.value) };
+    },
+  });
+  registry.register({
+    type: 'register-bank3', label: 'Ternary register bank', category: 'storage', breaksCombinationalPath: true,
+    inputs: ['d', 'address', 'action', 'clock', 'reset'], outputs: ['out'],
+    defaultState: { values: [UNKNOWN, UNKNOWN, UNKNOWN], initialValue: 0, previousClock: 0 },
+    evaluate(c, { circuit }) {
+      const address = trit(c.inputs.address), action = trit(c.inputs.action), clock = trit(c.inputs.clock), reset = trit(c.inputs.reset), staged = circuit.getStagedState(c.id);
+      if (isKnownTrit(clock)) {
+        const risingEdge = trit(staged.previousClock) !== 1 && clock === 1;
+        const patch = { previousClock: clock };
+        if (risingEdge && reset === 1) patch.values = [trit(c.state.initialValue), trit(c.state.initialValue), trit(c.state.initialValue)];
+        else if (risingEdge && action === 1 && isKnownTrit(address) && isKnownTrit(c.inputs.d)) {
+          const values = [...(Array.isArray(staged.values) ? staged.values : [UNKNOWN, UNKNOWN, UNKNOWN])].map(trit);
+          values[address < 0 ? 0 : address > 0 ? 2 : 1] = trit(c.inputs.d); patch.values = values;
+        }
+        circuit.stageStateCommit(c.id, patch);
+      }
+      if (action !== -1 || !isKnownTrit(address)) return { out: UNKNOWN };
+      const values = Array.isArray(c.state.values) ? c.state.values : [UNKNOWN, UNKNOWN, UNKNOWN];
+      return { out: trit(values[address < 0 ? 0 : address > 0 ? 2 : 1]) };
+    },
+  });
+
+  const experimentalCost = () => ({ logical: { nodes: 1, depth: 1 } });
+
+  // Technology-neutral device/cell layer. These are idealized electrical cells,
+  // deliberately separate from any CMOS, CNTFET, current-mode or memristive mapping.
+  const idealDeviceCost = () => ({ logical: { nodes: 1, depth: 1 } });
+  registry.register({ type: 'restore3', label: 'Ternary restorer', category: 'device', candidate: true, cost: idealDeviceCost(), inputs: ['in'], outputs: ['out'], evaluate(c) { return { out: isKnownTrit(c.inputs.in) ? trit(c.inputs.in) : UNKNOWN }; } });
+  registry.register({ type: 'threshold3', label: 'Ternary level detector', category: 'device', candidate: true, cost: idealDeviceCost(), inputs: ['in'], outputs: ['neg', 'zero', 'pos'], evaluate(c) { const value = trit(c.inputs.in); if (!isKnownTrit(value)) return { neg: UNKNOWN, zero: UNKNOWN, pos: UNKNOWN }; return { neg: value < 0 ? 1 : 0, zero: value === 0 ? 1 : 0, pos: value > 0 ? 1 : 0 }; } });
+  registry.register({ type: 'pass3', label: 'Ternary pass switch', category: 'device', candidate: true, cost: idealDeviceCost(), inputs: ['in', 'gate'], outputs: ['out'], evaluate(c) { const gate = trit(c.inputs.gate); if (!isKnownTrit(gate)) return { out: UNKNOWN }; return { out: gate === 1 ? trit(c.inputs.in) : FLOATING }; } });
+  registry.register({ type: 'storage-node3', label: 'Ternary storage node', category: 'device', candidate: true, breaksCombinationalPath: true, cost: idealDeviceCost(), inputs: ['drive', 'write', 'reset'], outputs: ['q'], defaultState: { value: UNKNOWN, initialValue: 0 }, evaluate(c, { circuit }) { const reset = trit(c.inputs.reset), write = trit(c.inputs.write); if (reset === 1) circuit.stageStateCommit(c.id, { value: trit(c.state.initialValue) }); else if (write === 1 && isKnownTrit(c.inputs.drive)) circuit.stageStateCommit(c.id, { value: trit(c.inputs.drive) }); return { q: trit(c.state.value) }; } });
+  registry.register({ type: 'clock-phase3', label: 'Clock phase inverter', category: 'control', candidate: true, cost: idealDeviceCost(), inputs: ['clock'], outputs: ['out'], evaluate(c) { const clock = trit(c.inputs.clock); return { out: clock === 0 ? 1 : clock === 1 ? 0 : UNKNOWN }; } });
 
   registry.register({ type: 'negate', label: 'Negate', category: 'logic', candidate: true, cost: experimentalCost('Balanced ternary inversion candidate.'), inputs: ['in'], outputs: ['out'], evaluate: (c) => ({ out: needsKnownInputs(c, ['in']) ? -trit(c.inputs.in) : UNKNOWN }) });
   registry.register({ type: 'compare', label: 'Compare', category: 'logic', candidate: true, cost: experimentalCost('Returns -1, 0 or +1 for less/equal/greater.'), inputs: ['a', 'b'], outputs: ['out'], evaluate(c) { if (!needsKnownInputs(c, ['a', 'b'])) return { out: UNKNOWN }; const a = trit(c.inputs.a), b = trit(c.inputs.b); return { out: a < b ? -1 : a > b ? 1 : 0 }; } });
-  registry.register({ type: 'select3', label: 'Select3', category: 'routing', candidate: true, cost: experimentalCost('Native three-way selector candidate.'), inputs: ['neg', 'zero', 'pos', 'select'], outputs: ['out'], evaluate(c) { const s = trit(c.inputs.select); if (isUnknown(s)) return { out: UNKNOWN }; return { out: trit(c.inputs[s < 0 ? 'neg' : s > 0 ? 'pos' : 'zero']) }; } });
+  registry.register({ type: 'select3', label: 'Select3', category: 'routing', candidate: true, cost: experimentalCost('Native three-way selector candidate.'), inputs: ['neg', 'zero', 'pos', 'select'], outputs: ['out'], evaluate(c) { const s = trit(c.inputs.select); if (!isKnownTrit(s)) return { out: UNKNOWN }; return { out: trit(c.inputs[s < 0 ? 'neg' : s > 0 ? 'pos' : 'zero']) }; } });
+  registry.register({ type: 'route3', label: 'Route3', category: 'routing', candidate: true, cost: experimentalCost('Native one-to-three ternary router candidate; inactive paths are zero.'), inputs: ['in', 'select'], outputs: ['neg', 'zero', 'pos'], evaluate(c) { const s = trit(c.inputs.select); if (!isKnownTrit(s)) return { neg: UNKNOWN, zero: UNKNOWN, pos: UNKNOWN }; const out = { neg: 0, zero: 0, pos: 0 }; out[s < 0 ? 'neg' : s > 0 ? 'pos' : 'zero'] = trit(c.inputs.in); return out; } });
+  registry.register({ type: 'adjust3', label: 'Adjust3', category: 'control', candidate: true, cost: experimentalCost('Applies -1 / 0 / +1 as decrement / hold / increment and reports ternary carry.'), inputs: ['value', 'control'], outputs: ['next', 'carry'], evaluate(c) { if (!needsKnownInputs(c, ['value', 'control'])) return { next: UNKNOWN, carry: UNKNOWN }; const raw = trit(c.inputs.value) + trit(c.inputs.control); const carry = raw < -1 ? -1 : raw > 1 ? 1 : 0; return { next: trit(raw - (3 * carry)), carry }; } });
+  registry.register({ type: 'control3', label: 'Control3 decode', category: 'control', candidate: true, cost: experimentalCost('Decodes one packed ternary action signal into three physical paths.'), inputs: ['control'], outputs: ['neg', 'zero', 'pos'], evaluate(c) { const s = trit(c.inputs.control); if (!isKnownTrit(s)) return { neg: UNKNOWN, zero: UNKNOWN, pos: UNKNOWN }; return { neg: s < 0 ? 1 : 0, zero: s === 0 ? 1 : 0, pos: s > 0 ? 1 : 0 }; } });
   registry.register({ type: 'min', label: 'MIN', category: 'logic', candidate: true, cost: experimentalCost('MIN(A,B) ternary logic candidate.'), inputs: ['a', 'b'], outputs: ['out'], evaluate(c) { return { out: needsKnownInputs(c, ['a', 'b']) ? Math.min(trit(c.inputs.a), trit(c.inputs.b)) : UNKNOWN }; } });
   registry.register({ type: 'max', label: 'MAX', category: 'logic', candidate: true, cost: experimentalCost('MAX(A,B) ternary logic candidate.'), inputs: ['a', 'b'], outputs: ['out'], evaluate(c) { return { out: needsKnownInputs(c, ['a', 'b']) ? Math.max(trit(c.inputs.a), trit(c.inputs.b)) : UNKNOWN }; } });
   registry.register({
@@ -576,9 +705,11 @@
       return { sum: trit(raw - (3 * carry)), carry };
     },
   });
+  registry.register({ type: 'seven-segment-display', label: '7-segment display', category: 'output', inputs: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'sign'], outputs: [], cost: { logical: { nodes: 0, depth: 0 } }, evaluate() { return {}; } });
   registry.register({ type: 'probe', label: 'Probe', inputs: ['in'], outputs: [], defaultState: { value: UNKNOWN }, evaluate(c) { c.state.value = trit(c.inputs.in); return {}; } });
   registry.register({ type: 'component-input', label: 'Component Input', inputs: [], outputs: ['out'], defaultState: { name: 'in', value: 0 }, boundary: 'input', evaluate: (c) => ({ out: trit(c.state.value) }) });
+  registry.register({ type: 'component-seven-segment-display', label: '7-segment Output', inputs: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'sign'], outputs: [], boundary: 'display', evaluate() { return {}; } });
   registry.register({ type: 'component-output', label: 'Component Output', inputs: ['in'], outputs: [], defaultState: { name: 'out', value: UNKNOWN }, boundary: 'output', evaluate(c) { c.state.value = trit(c.inputs.in); return {}; } });
 
-  global.TernaryCore = { TRITS, UNKNOWN, isUnknown, trit, clone, normalizeSequence, nextSequenceState, EventBus, ComponentRegistry, Circuit, registry, slug, boundaryPorts, makeCustomDefinition };
+  global.TernaryCore = { TRITS, UNKNOWN, FLOATING, isUnknown, isFloating, isKnownTrit, trit, clone, normalizeSequence, nextSequenceState, EventBus, ComponentRegistry, Circuit, registry, slug, boundaryPorts, makeCustomDefinition };
 })(window);

@@ -18,16 +18,40 @@
     pos: 0x52c7a5,
     port: 0xcbd5de,
     unknown: 0x8e6aaf,
+    floating: 0xf0b35e,
   };
 
   function signalColor(value) {
     value = trit(value);
-    return value === null ? COLORS.unknown : value < 0 ? COLORS.neg : value > 0 ? COLORS.pos : COLORS.zero;
+    return value === null ? COLORS.unknown : value === 'Z' ? COLORS.floating : value < 0 ? COLORS.neg : value > 0 ? COLORS.pos : COLORS.zero;
   }
 
   function signalText(value) {
     value = trit(value);
-    return value === null ? '?' : value > 0 ? '+1' : String(value);
+    return value === null ? '?' : value === 'Z' ? 'Z' : value > 0 ? '+1' : String(value);
+  }
+
+  // A seven-segment peripheral accepts only 0 (off) and +1 (on). Other
+  // simulator states are deliberately visible so a decoder error is not hidden.
+  function displaySegmentColor(value) {
+    value = trit(value);
+    if (value === 1) return 0xf04452;
+    if (value === 0) return 0x293449;
+    if (value === -1) return 0xf0b35e;
+    return value === 'Z' ? 0xf0b35e : 0x8e6aaf;
+  }
+
+  function drawSevenSegment(graphics, inputs, width) {
+    // Keep the glyph deliberately smaller than its bezel, even at low zoom.
+    const left = width - 108;
+    const right = width - 38;
+    const horizontal = (name, y) => graphics.roundRect(left + 10, y, right - left - 20, 9, 3).fill(displaySegmentColor(inputs[name]));
+    const vertical = (name, x, y) => graphics.roundRect(x, y, 9, 32, 3).fill(displaySegmentColor(inputs[name]));
+    graphics.clear()
+      .roundRect(left - 54, 50, right - left + 46, 126, 9).fill(0x0a0d12).stroke({ color: 0x485568, width: 1 });
+    horizontal('a', 58); vertical('f', left, 68); vertical('b', right - 9, 68);
+    horizontal('g', 108); vertical('e', left, 118); vertical('c', right - 9, 118); horizontal('d', 158);
+    graphics.roundRect(left - 42, 109, 25, 7, 3).fill(displaySegmentColor(inputs.sign));
   }
 
   class CircuitRenderer {
@@ -345,13 +369,14 @@
       if (!this.nodeLayer || this.nodeViews.has(component.id)) return;
       const definition = this.registry.get(component.type);
       const layout = component.state.layout || {};
-      const defaultWidth = component.type === 'select3' ? 170 : 150;
+      const isSevenSegment = component.type === 'seven-segment-display' || component.type === 'component-seven-segment-display' || definition.visual?.kind === 'seven-segment';
+      const defaultWidth = isSevenSegment ? 240 : component.type === 'select3' ? 170 : 150;
       const width = Math.max(120, Math.min(320, Number(layout.width) || defaultWidth));
       const portSpacing = Math.max(18, Math.min(60, Number(layout.portSpacing) || 24));
       const inputSide = layout.inputSide === 'right' ? 'right' : 'left';
       const outputSide = layout.outputSide === 'left' ? 'left' : 'right';
       const rows = Math.max(definition.inputs.length, definition.outputs.length, 1);
-      const height = Math.max(78, 48 + rows * portSpacing);
+      const height = Math.max(isSevenSegment ? 240 : 78, 48 + rows * portSpacing);
       const container = new PIXI.Container();
       container.position.set(component.x, component.y);
       container.eventMode = 'static';
@@ -373,6 +398,13 @@
       });
       valueText.position.set(12, 32);
       container.addChild(valueText);
+
+      let segmentDisplay = null;
+      if (isSevenSegment) {
+        segmentDisplay = new PIXI.Graphics();
+        segmentDisplay.eventMode = 'none';
+        container.addChild(segmentDisplay);
+      }
 
       const ports = new Map();
       const makePort = (kind, name, index, total) => {
@@ -502,7 +534,7 @@
       container.on('pointerupoutside', () => { container.cursor = 'grab'; });
 
       this.nodeLayer.addChild(container);
-      this.nodeViews.set(component.id, { container, body, title, valueText, valueButton, ports, width, height });
+      this.nodeViews.set(component.id, { container, body, title, valueText, valueButton, segmentDisplay, ports, width, height });
       this.drawNode(component.id);
       this.refreshComponentView(component.id);
     }
@@ -539,6 +571,12 @@
         const value = trit(component.state.value);
         view.valueText.text = `value = ${signalText(value)}`;
         view.valueText.style.fill = signalColor(value);
+      } else if (component.type === 'seven-segment-display' || component.type === 'component-seven-segment-display' || this.registry.get(component.type).visual?.kind === 'seven-segment') {
+        const segments = component.type === 'seven-segment-display' || component.type === 'component-seven-segment-display' ? component.inputs : (component.state.displaySegments || {});
+        const invalid = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'sign'].filter((name) => ![0, 1].includes(trit(segments[name]))).map((name) => name.toUpperCase());
+        view.valueText.text = invalid.length ? `invalid: ${invalid.join(', ')}` : '0 = off · +1 = on';
+        view.valueText.style.fill = invalid.length ? COLORS.floating : COLORS.muted;
+        drawSevenSegment(view.segmentDisplay, segments, view.width);
       } else if (component.type === 'component-input' || component.type === 'component-output') {
         const value = trit(component.type === 'component-input' ? component.state.value : component.inputs.in);
         view.valueText.text = `${component.state.name || (component.type === 'component-input' ? 'in' : 'out')} = ${signalText(value)}`;
