@@ -23,6 +23,14 @@
     selector: { label: 'Compare / Select', description: 'Explore compare and native three-way routing as the main ternary building blocks.', types: ['negate', 'compare', 'select3', 'route3', 'adjust3', 'control3', 'threshold3', 'restore3', 'pass3', 'storage-node3', 'clock-phase3', 'normalize-carry'], metadata: { purpose: 'comparison/routing architecture', logicalCostModel: 'sum primitive node costs' } },
     arithmetic: { label: 'Arithmetic core', description: 'Small set focused on balanced-ternary arithmetic experiments.', types: ['negate', 'compare', 'adjust3', 'normalize-carry'], metadata: { purpose: 'arithmetic', logicalCostModel: 'sum primitive node costs' } },
   };
+  const PRIMITIVE_GROUPS = [
+    { label: 'Inputs & observation', types: ['trit-input', 'sequence-generator', 'probe'] },
+    { label: 'Logic & signal shaping', types: ['negate', 'min', 'max', 'threshold3', 'restore3', 'pass3'] },
+    { label: 'Compare & routing', types: ['compare', 'select3', 'route3', 'control3'] },
+    { label: 'Arithmetic', types: ['adjust3', 'normalize-carry'] },
+    { label: 'State & timing', types: ['latch3', 'register3', 'register-bank3', 'storage-node3', 'clock-phase3'] },
+    { label: 'Output', types: ['seven-segment-display'] },
+  ];
   const primitiveExperiment = { activeId: 'all', customTypes: new Set(EXPERIMENTAL_PRIMITIVES) };
   const PROJECT_FORMAT_VERSION = 6;
   const COMPONENT_PACKAGE_FORMAT_VERSION = 1;
@@ -928,10 +936,22 @@
 
   function renderLibrary() {
     primitiveList.innerHTML = '';
-    const types = [...UTILITY_PRIMITIVES, ...activePrimitiveTypes()];
-    for (const type of types) {
-      const def = registry.get(type);
-      addLibraryButton(primitiveList, type, def.label, primitiveSubtitle(type), false, Boolean(def.candidate));
+    const visibleTypes = new Set([...UTILITY_PRIMITIVES, ...activePrimitiveTypes()]);
+    for (const group of PRIMITIVE_GROUPS) {
+      const types = group.types.filter((type) => visibleTypes.has(type));
+      if (!types.length) continue;
+      const section = document.createElement('section');
+      section.className = 'primitive-group';
+      const heading = document.createElement('h3');
+      heading.textContent = group.label;
+      const entries = document.createElement('div');
+      entries.className = 'component-list primitive-group-list';
+      for (const type of types) {
+        const def = registry.get(type);
+        addLibraryButton(entries, type, def.label, primitiveSubtitle(type), false, Boolean(def.candidate));
+      }
+      section.append(heading, entries);
+      primitiveList.appendChild(section);
     }
 
     interfaceSection.hidden = current.kind !== 'custom';
