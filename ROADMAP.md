@@ -204,13 +204,18 @@ The simulator stops at idealized structural cells. It does not model transistors
 - [x] Decide how a multi-trit value is shown natively: one visible `− / 0 / +` glyph per trit, most-significant first
 - [x] Defer balanced-ternary → decimal conversion until multi-trit arithmetic exists; treat it as an optional debugger/peripheral adapter
 
+## Component sharing and demo projects
+- [x] Separate reusable component library from demo-project intent
+- [x] Export a reusable component with nested dependencies and saved tests
+- [x] Import component packages with fresh ids and recursion validation
+
 ## Phase 16B — CPU building blocks
 - [x] Fix the first CPU word width at 6 balanced trits (`−364 … +364`)
 - [x] Build an opening reusable 6-trit word component
 - [x] Validate all 729 six-trit words at the word boundary
 - [ ] Use three decimal display positions for the future `−364 … +364` peripheral
 - [x] Native ternary adder — opening 6-trit Normalize / carry ripple chain
-- [ ] Negation/subtraction strategy
+- [x] Negation/subtraction strategy — reusable 6-trit negator feeding 6-trit ripple subtraction
 - [ ] Comparator
 - [ ] Selector/router network
 - [ ] ALU only after primitive/operation experiments justify its shape

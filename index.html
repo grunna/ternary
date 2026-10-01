@@ -4,11 +4,13 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Ternary Lab</title>
+  <link rel="icon" type="image/png" href="assets/ternary-lab-icon.png" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
+      <img class="brand-icon" src="assets/ternary-lab-icon.png" alt="" width="32" height="32" />
       <strong>Ternary Lab</strong>
       <span>balanced ternary circuit sandbox</span>
     </div>
@@ -59,10 +61,10 @@
       </details>
       <input id="importFile" type="file" accept="application/json,.json" hidden />
       <details class="toolbar-menu demo-menu">
-        <summary>Demo</summary>
+        <summary>Demo projects</summary>
         <div class="toolbar-menu-panel">
           <div class="toolbar-group utility-actions" aria-label="Demo actions">
-            <select id="demoSelect" aria-label="Demo example"><option value="full-adder">Full adder reference</option><option value="adder-comparison">Adder comparison</option><option value="primitive-set-comparison">Primitive set comparison</option><option value="comparator-comparison">Comparator comparison</option><option value="selector-router">Selector / router</option><option value="control-signals">Ternary control signals</option><option value="sequential-storage">Ternary latch / register</option><option value="register-bank">Ternary register bank</option><option value="device-cells">Ternary device cells</option><option value="seven-segment">7-segment display</option><option value="one-trit-display">1-trit signed display decoder</option><option value="three-trit-display">3-trit signed display decoder</option><option value="six-trit-word">6-trit word component</option><option value="six-trit-adder">6-trit ripple adder</option><option value="structural-storage">Structural latch / register</option><option value="compare">Compare</option></select>
+            <select id="demoSelect" aria-label="Demo example"><option value="full-adder">Full adder reference</option><option value="adder-comparison">Adder comparison</option><option value="primitive-set-comparison">Primitive set comparison</option><option value="comparator-comparison">Comparator comparison</option><option value="selector-router">Selector / router</option><option value="control-signals">Ternary control signals</option><option value="sequential-storage">Ternary latch / register</option><option value="register-bank">Ternary register bank</option><option value="device-cells">Ternary device cells</option><option value="seven-segment">7-segment display</option><option value="one-trit-display">1-trit signed display decoder</option><option value="three-trit-display">3-trit signed display project</option><option value="six-trit-word">6-trit word component</option><option value="six-trit-adder">6-trit ripple adder</option><option value="six-trit-subtractor">6-trit negate / subtract</option><option value="structural-storage">Structural latch / register</option><option value="compare">Compare</option></select>
             <button id="demoBtn">Load demo</button>
           </div>
         </div>
@@ -104,7 +106,8 @@
         <div id="interfaceList" class="component-list"></div>
       </div>
 
-      <h2>Reusable components</h2>
+      <div class="library-heading"><h2>Reusable components</h2><button id="importComponentBtn" type="button">Import</button></div>
+      <input id="importComponentFile" type="file" accept="application/json,.json,.ternary-component.json" hidden />
       <div id="customList" class="component-list"></div>
       <p id="customEmpty" class="hint">No custom components yet.</p>
 

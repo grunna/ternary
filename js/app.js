@@ -25,6 +25,7 @@
   };
   const primitiveExperiment = { activeId: 'all', customTypes: new Set(EXPERIMENTAL_PRIMITIVES) };
   const PROJECT_FORMAT_VERSION = 6;
+  const COMPONENT_PACKAGE_FORMAT_VERSION = 1;
   let currentProjectId = null;
   let currentProjectName = 'Project 1';
   let testSuites = [];
@@ -72,6 +73,8 @@
   const projectNameInput = $('projectName');
   const projectMessage = $('projectMessage');
   const importFile = $('importFile');
+  const importComponentBtn = $('importComponentBtn');
+  const importComponentFile = $('importComponentFile');
 
   function circuit() { return current.circuit; }
   function fmt(value) { value = trit(value); return value === null ? '?' : value === 'Z' ? 'Z' : value > 0 ? '+1' : String(value); }
@@ -965,13 +968,19 @@
     open.textContent = 'Open';
     open.setAttribute('aria-label', `Open reusable component ${meta.label}`);
     open.addEventListener('click', () => openCustomComponent(meta.type));
+    const exportButton = document.createElement('button');
+    exportButton.type = 'button';
+    exportButton.className = 'export-custom-component';
+    exportButton.textContent = 'Export';
+    exportButton.setAttribute('aria-label', `Export reusable component ${meta.label}`);
+    exportButton.addEventListener('click', () => exportCustomComponent(meta.id));
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.className = 'remove-custom-component';
     remove.textContent = 'Remove';
     remove.setAttribute('aria-label', `Remove reusable component ${meta.label}`);
     remove.addEventListener('click', () => removeCustomComponent(meta.id));
-    actions.append(open, remove);
+    actions.append(open, exportButton, remove);
     entry.appendChild(actions);
     customList.appendChild(entry);
   }
@@ -1012,6 +1021,82 @@
     return usages;
   }
 
+  function componentDependencyIds(rootId, components = customComponents) {
+    const ids = new Set();
+    const typeToId = new Map([...components.values()].map((meta) => [meta.type, meta.id]));
+    const visit = (id) => {
+      if (ids.has(id)) return;
+      const meta = components.get(id);
+      if (!meta) throw new Error('Missing component dependency: ' + id);
+      ids.add(id);
+      for (const component of meta.circuit?.components || []) {
+        const childId = typeToId.get(component.type);
+        if (childId) visit(childId);
+      }
+    };
+    visit(rootId);
+    return ids;
+  }
+
+  function downloadJson(filename, payload) {
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url; anchor.download = filename;
+    document.body.appendChild(anchor); anchor.click(); anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  function exportCustomComponent(id) {
+    try {
+      if (!saveCurrentCustomDefinition()) return;
+      const root = customComponents.get(id);
+      if (!root) throw new Error('Component is no longer available.');
+      const ids = componentDependencyIds(id);
+      const components = [...ids].map((componentId) => clone(customComponents.get(componentId)));
+      const packageTests = testSuites.filter((suite) => ids.has(suite.componentId)).map(clone);
+      downloadJson((slug(root.label) || 'ternary-component') + '.ternary-component.json', { format: 'ternary-component-package', version: COMPONENT_PACKAGE_FORMAT_VERSION, rootComponentId: id, components, testSuites: packageTests });
+      setStatus('Exported “' + root.label + '” with ' + components.length + ' component definition' + (components.length === 1 ? '' : 's') + '.');
+    } catch (error) { setStatus('Component export failed: ' + error.message, true); }
+  }
+
+  function importedComponentId(label, used) {
+    const base = slug(label) || 'component';
+    let number = 1; let id = base + '-imported';
+    while (used.has(id)) { number += 1; id = base + '-imported-' + number; }
+    used.add(id); return id;
+  }
+
+  async function importComponentPackage(file) {
+    try {
+      const data = JSON.parse(await file.text());
+      if (data?.format !== 'ternary-component-package' || Number(data.version) !== COMPONENT_PACKAGE_FORMAT_VERSION) throw new Error('This is not a supported component package.');
+      if (!Array.isArray(data.components) || !data.components.length || !data.rootComponentId) throw new Error('Package has no root component.');
+      const original = new Map(data.components.map((meta) => [meta.id, clone(meta)]));
+      const root = original.get(data.rootComponentId);
+      if (!root) throw new Error('Package root component is missing.');
+      for (const meta of original.values()) if (!meta.id || !meta.type || !meta.circuit) throw new Error('A packaged component is incomplete.');
+      const usedIds = new Set(customComponents.keys());
+      const idMap = new Map(), typeMap = new Map(), imported = new Map();
+      for (const meta of original.values()) { const id = importedComponentId(meta.label, usedIds); idMap.set(meta.id, id); typeMap.set(meta.type, 'custom:' + id); }
+      const usedLabels = [...customComponents.values()].map((meta) => meta.label);
+      for (const meta of original.values()) {
+        const next = clone(meta); next.id = idMap.get(meta.id); next.type = typeMap.get(meta.type);
+        next.label = uniqueName(meta.label, [...usedLabels, ...[...imported.values()].map((entry) => entry.label)], 'Imported component');
+        for (const component of next.circuit.components || []) if (typeMap.has(component.type)) component.type = typeMap.get(component.type);
+        imported.set(next.id, next);
+      }
+      const combined = new Map([...customComponents, ...imported]);
+      const cycle = customRecursionPath(null, null, combined);
+      if (cycle) throw new Error('Imported component would create recursion: ' + recursionMessage(cycle, combined));
+      for (const meta of imported.values()) { customComponents.set(meta.id, meta); registerCustom(meta); }
+      const suites = (data.testSuites || []).map((suite) => { const componentId = idMap.get(suite.componentId); return componentId ? { ...clone(suite), componentId } : null; }).filter(Boolean);
+      testSuites.push(...suites); renderLibrary(); await autosaveIfChanged();
+      const importedRoot = imported.get(idMap.get(root.id));
+      setStatus('Imported “' + importedRoot.label + '” with ' + imported.size + ' component definition' + (imported.size === 1 ? '' : 's') + '.');
+    } catch (error) { setStatus('Component import failed: ' + error.message, true); }
+    finally { importComponentFile.value = ''; }
+  }
   function removeCustomComponent(id) {
     const meta = customComponents.get(id);
     if (!meta) return;
@@ -1627,6 +1712,7 @@
     if ($('demoSelect').value === 'three-trit-display') return buildThreeTritDisplayDemo();
     if ($('demoSelect').value === 'six-trit-word') return buildSixTritWordDemo();
     if ($('demoSelect').value === 'six-trit-adder') return buildSixTritAdderDemo();
+    if ($('demoSelect').value === 'six-trit-subtractor') return buildSixTritSubtractorDemo();
     if ($('demoSelect').value === 'structural-storage') return buildStructuralStorageDemo();
     const label = uniqueName('Ternary Full Adder', [...customComponents.values()].map((meta) => meta.label), 'Ternary Full Adder');
     const id = `${slug(label)}-${Date.now().toString(36)}`;
@@ -2020,6 +2106,106 @@
     rootCircuit.connect(adder.id, 'carryOut', probes[6].id, 'in');
     renderer.select(null); renderLibrary(); updateStats(); resetHistory();
     setStatus('6-trit ripple adder loaded. Set A, B and Carry in; inspect Sum t5…t0 and Carry out. Open the component to follow the six Normalize / carry cells from t0 toward t5.');
+  }
+
+  function addSixTritNegateCases(componentId, inputs, outputs) {
+    const cases = [];
+    for (let value = -364; value <= 364; value += 1) {
+      const source = balancedWordDigits(value), expected = balancedWordDigits(-value);
+      cases.push({
+        id: `six-trit-negate-${value}`, name: `negate ${value}`,
+        inputs: Object.fromEntries(inputs.map((input, index) => [input.id, source[index]])),
+        expectedOutputs: Object.fromEntries(outputs.map((output, index) => [output.id, expected[index]])),
+      });
+    }
+    testSuites = testSuites.filter((suite) => suite.componentId !== componentId);
+    testSuites.push({ componentId, cases });
+  }
+
+  function addSixTritSubtractCases(componentId, aInputs, bInputs, carryInput, differenceOutputs, carryOutput) {
+    const vectors = [
+      { name: 'zero minus zero', a: 0, b: 0, carry: 0 },
+      { name: 'zero minus one', a: 0, b: 1, carry: 0 },
+      { name: 'negative ripple', a: -364, b: 1, carry: 0 },
+      { name: 'positive ripple', a: 364, b: -1, carry: 0 },
+      { name: 'positive word overflow', a: 364, b: -364, carry: 0 },
+      { name: 'negative word overflow', a: -364, b: 364, carry: 0 },
+      { name: 'mixed signs with carry in', a: 123, b: -45, carry: -1 },
+    ];
+    const cases = vectors.map((vector) => {
+      const a = balancedWordDigits(vector.a), b = balancedWordDigits(vector.b);
+      const raw = vector.a - vector.b + vector.carry;
+      const carry = raw < -364 ? -1 : raw > 364 ? 1 : 0;
+      const difference = balancedWordDigits(raw - 729 * carry);
+      return {
+        id: `six-trit-sub-${vector.a}-${vector.b}-${vector.carry}`, name: vector.name,
+        inputs: { ...Object.fromEntries(aInputs.map((input, index) => [input.id, a[index]])), ...Object.fromEntries(bInputs.map((input, index) => [input.id, b[index]])), [carryInput.id]: vector.carry },
+        expectedOutputs: { ...Object.fromEntries(differenceOutputs.map((output, index) => [output.id, difference[index]])), [carryOutput.id]: carry },
+      };
+    });
+    testSuites = testSuites.filter((suite) => suite.componentId !== componentId);
+    testSuites.push({ componentId, cases });
+  }
+
+  function buildSixTritSubtractorDemo() {
+    const names = ['t5', 't4', 't3', 't2', 't1', 't0'];
+    const weights = [243, 81, 27, 9, 3, 1];
+    const negatorLabel = uniqueName('6-trit negate', [...customComponents.values()].map((meta) => meta.label), '6-trit negate');
+    const negatorId = `${slug(negatorLabel)}-${Date.now().toString(36)}`;
+    const negatorInner = new Circuit(registry);
+    const negateInputs = names.map((name, index) => negatorInner.addComponent('component-input', -260, -150 + index * 60, { name: `in${name.slice(1)}`, label: `In ${name.slice(1)}` }));
+    const negates = names.map((name, index) => negatorInner.addComponent('negate', 0, -150 + index * 60, { label: `Negate ${name}` }));
+    const negateOutputs = names.map((name, index) => negatorInner.addComponent('component-output', 240, -150 + index * 60, { name: `out${name.slice(1)}`, label: `Out ${name.slice(1)}` }));
+    names.forEach((name, index) => { negatorInner.connect(negateInputs[index].id, 'out', negates[index].id, 'in'); negatorInner.connect(negates[index].id, 'out', negateOutputs[index].id, 'in'); });
+    const negatorMeta = {
+      id: negatorId, type: `custom:${negatorId}`, label: negatorLabel, circuit: negatorInner.serialize(),
+      experiment: { role: 'six-trit arithmetic building block', nodeCount: 6, depth: 1, primitiveCounts: { negate: 6 }, metrics: { nodes: 6, depth: 1, wires: negatorInner.wires.size, transitions: 0, transitionScenario: 'static negation; transition count intentionally not measured yet' }, rationale: 'Balanced ternary negation is digitwise: every +1 becomes -1, every -1 becomes +1, and zero remains zero. No carry chain is needed.', validation: 'Exhaustive 729/729 word cases saved.' },
+    };
+    customComponents.set(negatorId, negatorMeta); registerCustom(negatorMeta); addSixTritNegateCases(negatorId, negateInputs, negateOutputs);
+
+    const subtractLabel = uniqueName('6-trit subtractor', [...customComponents.values()].map((meta) => meta.label), '6-trit subtractor');
+    const subtractId = `${slug(subtractLabel)}-${Date.now().toString(36)}`;
+    const inner = new Circuit(registry);
+    const aInputs = names.map((name, index) => inner.addComponent('component-input', -520, -250 + index * 86, { name: `a${name.slice(1)}`, label: `A${name.slice(1)} (${weights[index]})` }));
+    const bInputs = names.map((name, index) => inner.addComponent('component-input', -390, -250 + index * 86, { name: `b${name.slice(1)}`, label: `B${name.slice(1)} (${weights[index]})` }));
+    const carryInput = inner.addComponent('component-input', -520, 300, { name: 'carryIn', label: 'Carry in' });
+    const negator = inner.addComponent(negatorMeta.type, -170, -270, { label: negatorLabel });
+    const adders = names.map((name, index) => inner.addComponent('normalize-carry', 100, -250 + index * 86, { label: `Subtract ${name}` }));
+    const differenceOutputs = names.map((name, index) => inner.addComponent('component-output', 380, -250 + index * 86, { name: `d${name.slice(1)}`, label: `Difference ${name.slice(1)}` }));
+    const carryOutput = inner.addComponent('component-output', 380, -330, { name: 'carryOut', label: 'Carry out' });
+    for (let index = 0; index < names.length; index += 1) {
+      inner.connect(aInputs[index].id, 'out', adders[index].id, 'a');
+      inner.connect(bInputs[index].id, 'out', negator.id, negateInputs[index].state.name);
+      inner.connect(negator.id, negateOutputs[index].state.name, adders[index].id, 'b');
+      inner.connect(adders[index].id, 'sum', differenceOutputs[index].id, 'in');
+      if (index === names.length - 1) inner.connect(carryInput.id, 'out', adders[index].id, 'c');
+      else inner.connect(adders[index + 1].id, 'carry', adders[index].id, 'c');
+    }
+    inner.connect(adders[0].id, 'carry', carryOutput.id, 'in');
+    const subtractMeta = {
+      id: subtractId, type: `custom:${subtractId}`, label: subtractLabel, circuit: inner.serialize(),
+      experiment: { role: 'six-trit arithmetic building block', nodeCount: 12, depth: 7, primitiveCounts: { negate: 6, 'normalize-carry': 6 }, metrics: { nodes: 12, depth: 7, wires: inner.wires.size, transitions: 0, transitionScenario: 'static subtraction result; transition count intentionally not measured yet' }, rationale: 'Subtraction is addition of the digitwise negated B word. The reusable negator feeds the same six-cell Normalize / carry ripple strategy as addition; Carry in supports a ternary adjustment or a later multi-word carry chain.', validation: 'Negator has 729 saved cases; saved subtractor cases cover zero, mixed signs and both word-boundary overflows.' },
+    };
+    customComponents.set(subtractId, subtractMeta); registerCustom(subtractMeta); addSixTritSubtractCases(subtractId, aInputs, bInputs, carryInput, differenceOutputs, carryOutput);
+    const aValue = 1, bValue = 1, carryValue = 0;
+    const aDigits = balancedWordDigits(aValue), bDigits = balancedWordDigits(bValue);
+    const controls = [
+      ...names.map((name, index) => rootCircuit.addComponent('trit-input', -520, -250 + index * 58, { value: aDigits[index], label: `A${name.slice(1)} · ${weights[index]}s` })),
+      ...names.map((name, index) => rootCircuit.addComponent('trit-input', -370, -250 + index * 58, { value: bDigits[index], label: `B${name.slice(1)} · ${weights[index]}s` })),
+      rootCircuit.addComponent('trit-input', -520, 130, { value: carryValue, label: 'Carry in' }),
+    ];
+    const subtractor = rootCircuit.addComponent(subtractMeta.type, -40, -270, { label: subtractLabel });
+    const probes = [
+      ...names.map((name, index) => rootCircuit.addComponent('probe', 300, -250 + index * 58, { label: `Difference ${name.slice(1)}` })),
+      rootCircuit.addComponent('probe', 300, 130, { label: 'Carry out' }),
+    ];
+    aInputs.forEach((input, index) => rootCircuit.connect(controls[index].id, 'out', subtractor.id, input.state.name));
+    bInputs.forEach((input, index) => rootCircuit.connect(controls[index + 6].id, 'out', subtractor.id, input.state.name));
+    rootCircuit.connect(controls[12].id, 'out', subtractor.id, 'carryIn');
+    differenceOutputs.forEach((output, index) => rootCircuit.connect(subtractor.id, output.state.name, probes[index].id, 'in'));
+    rootCircuit.connect(subtractor.id, 'carryOut', probes[6].id, 'in');
+    renderer.select(null); renderLibrary(); updateStats(); resetHistory();
+    setStatus('6-trit negate / subtract demo loaded. It computes A − B + Carry in. Open the subtractor, then open 6-trit negate, to inspect digitwise negation feeding the Normalize / carry ripple chain.');
   }
 
   function buildSevenSegmentDemo() {
@@ -2458,6 +2644,8 @@
     $('exportBtn').addEventListener('click', exportProject);
     $('importBtn').addEventListener('click', () => importFile.click());
     importFile.addEventListener('change', () => { const file = importFile.files?.[0]; if (file) importProjectFile(file); });
+    importComponentBtn.addEventListener('click', () => importComponentFile.click());
+    importComponentFile.addEventListener('change', () => { const file = importComponentFile.files?.[0]; if (file) importComponentPackage(file); });
     $('demoBtn').addEventListener('click', buildDemo);
     undoBtn.addEventListener('click', undo); redoBtn.addEventListener('click', redo);
     copyBtn.addEventListener('click', copySelection); pasteBtn.addEventListener('click', pasteSelection);

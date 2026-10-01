@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/ternary-lab-icon.png" alt="Ternary Lab icon" width="180" />
+</p>
+
 # Ternary Lab
 
 A static balanced-ternary circuit simulator built with plain JavaScript and PixiJS. No TypeScript, npm, bundler or backend is required.
@@ -150,6 +154,12 @@ The primitive library can now be switched between experiment sets without invali
 
 Preset sets include **All candidates**, **MIN / MAX**, **Compare / Select**, **Arithmetic core**, plus a **Custom experiment** assembled with checkboxes. The active experiment is saved with the project.
 
+## Reusable component packages
+
+The **Reusable components** library holds the small blocks that can be placed and opened inside any project. Use **Export** on a component to save a `.ternary-component.json` package. Its nested reusable dependencies and its saved test suites are included. Use **Import** in the library to load a package from another project or person; imported components receive fresh internal ids and a unique label, so they cannot overwrite the current project’s components.
+
+**Demo projects** are different: they are larger, self-contained workspaces intended to explain or test a system. The 3-trit signed display decoder is one such project; its useful smaller parts can be exported separately when they become reusable.
+
 ## Project persistence
 
 Projects are stored locally in the browser with IndexedDB. **New project** creates a separate empty project with the next available name (`New project`, `New project 2`, and so on); duplicate project names are rejected. Choose a project in the **Project** menu and use **Delete project** to remove it after confirmation. The active project is autosaved when it changes and the most recently used project is reopened on the next start.
@@ -193,6 +203,10 @@ Choose **6-trit word component** to load the reusable word boundary for the firs
 ## Six-trit ripple adder
 
 Choose **6-trit ripple adder** to load the first reusable CPU arithmetic block. It accepts `A5 … A0`, `B5 … B0` and `Carry in`, then produces `Sum5 … Sum0` and `Carry out`. Open it to see six `Normalize / carry` cells. Carry begins at the least-significant `t0` cell and ripples toward `t5`; the output represents `A + B + Carry in = Sum + 729 × Carry out`.
+
+## Six-trit negate / subtract
+
+Choose **6-trit negate / subtract** to load two nested reusable arithmetic blocks. **6-trit negate** flips each balanced trit independently and has no carry path. **6-trit subtractor** connects that negated B word to six `Normalize / carry` cells, so it computes `A − B + Carry in = Difference + 729 × Carry out`. Open the subtractor and then its negator to inspect both levels.
 
 ## Register bank
 

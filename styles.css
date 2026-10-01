@@ -30,7 +30,8 @@ button { color: var(--text); }
   background: #151a20;
 }
 
-.brand { display: flex; align-items: baseline; gap: 10px; min-width: max-content; }
+.brand { display: flex; align-items: center; gap: 10px; min-width: max-content; }
+.brand-icon { width: 30px; height: 30px; object-fit: contain; flex: 0 0 auto; }
 .brand strong { font-size: 18px; }
 .brand span { color: var(--muted); font-size: 13px; }
 .toolbar {
@@ -245,12 +246,17 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .inspector input[type="text"] { width: 100%; margin-top: 6px; border: 1px solid var(--border); background: #151a20; color: var(--text); border-radius: 7px; padding: 7px 8px; }
 .inspector .primary-action { background: #1c344b !important; color: #d9ecff !important; }
 .component-button.custom strong::after { content: ' ↳'; color: var(--accent); }
+.library-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.library-heading h2 { margin-right: 0; }
+.library-heading button { border: 1px solid #4e8bca; border-radius: 7px; background: #18334a; color: #d9ecff; padding: 5px 8px; cursor: pointer; font-size: 11px; }
+.library-heading button:hover { border-color: var(--accent); }
 .custom-library-entry { display: flex; align-items: stretch; gap: 6px; }
 .custom-library-entry .component-button { flex: 1; min-width: 0; }
-.custom-library-actions { display: grid; grid-template-rows: 1fr 1fr; gap: 4px; flex: 0 0 auto; }
-.open-custom-component, .remove-custom-component { border: 1px solid var(--border); border-radius: 7px; padding: 4px 8px; cursor: pointer; font-size: 11px; }
+.custom-library-actions { display: grid; grid-template-rows: repeat(3, 1fr); gap: 4px; flex: 0 0 auto; }
+.open-custom-component, .export-custom-component, .remove-custom-component { border: 1px solid var(--border); border-radius: 7px; padding: 4px 8px; cursor: pointer; font-size: 11px; }
 .open-custom-component { background: #1c344b; color: #d9ecff; }
-.open-custom-component:hover { border-color: var(--accent); }
+.export-custom-component { background: #20362e; color: #c7f1de; border-color: rgba(82,199,165,.45); }
+.open-custom-component:hover, .export-custom-component:hover { border-color: var(--accent); }
 .remove-custom-component { background: #292024; color: #ffc7c7; border-color: rgba(241,116,116,.45); }
 .remove-custom-component:hover { border-color: var(--danger); }
 
