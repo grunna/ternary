@@ -33,6 +33,7 @@
   let lastSavedSnapshot = '';
   let autosaveTimer = null;
   let projectActionBusy = false;
+  let lastProjectError = '';
   const stateTimeline = [];
 
   const history = { undo: [], redo: [], pending: null, restoring: false };
@@ -69,12 +70,20 @@
   const primitiveSetCost = $('primitiveSetCost');
   const projectSelect = $('projectSelect');
   const projectNameInput = $('projectName');
+  const projectMessage = $('projectMessage');
   const importFile = $('importFile');
 
   function circuit() { return current.circuit; }
   function fmt(value) { value = trit(value); return value === null ? '?' : value === 'Z' ? 'Z' : value > 0 ? '+1' : String(value); }
   function esc(value) { return String(value ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
   function setStatus(message, error = false) { statusEl.textContent = message; statusEl.classList.toggle('error', Boolean(error)); }
+
+  function setProjectMessage(message = '', error = false) {
+    if (!projectMessage) return;
+    projectMessage.hidden = !message;
+    projectMessage.textContent = message;
+    projectMessage.classList.toggle('error', Boolean(error));
+  }
 
   function updateStats() {
     $('statComponents').textContent = circuit().components.size;
@@ -737,6 +746,18 @@
     setStatus(`Test input ${component.state.name || 'in'} = ${fmt(value)}.`);
   }
 
+  function createComponentTestGroup(title, count, open = false) {
+    const group = document.createElement('details');
+    group.className = 'component-test-group component-test-fold';
+    group.open = open;
+    const summary = document.createElement('summary');
+    summary.textContent = `${title} (${count})`;
+    const content = document.createElement('div');
+    content.className = 'component-test-fold-content';
+    group.append(summary, content);
+    return { group, content };
+  }
+
   function renderComponentTestPanel() {
     componentTestSection.hidden = current.kind !== 'custom';
     componentTestPanel.innerHTML = '';
@@ -753,9 +774,7 @@
     }
 
     if (boundaries.inputs.length) {
-      const group = document.createElement('div');
-      group.className = 'component-test-group';
-      group.innerHTML = '<h3>Inputs</h3>';
+      const { group, content } = createComponentTestGroup('Inputs', boundaries.inputs.length, true);
       for (const input of boundaries.inputs) {
         const row = document.createElement('div');
         row.className = 'component-test-row';
@@ -772,28 +791,24 @@
           btn.addEventListener('click', () => setComponentTestInput(input.componentId, v));
           choices.appendChild(btn);
         }
-        group.appendChild(row);
+        content.appendChild(row);
       }
       componentTestPanel.appendChild(group);
     }
 
     if (boundaries.outputs.length) {
-      const group = document.createElement('div');
-      group.className = 'component-test-group';
-      group.innerHTML = '<h3>Outputs</h3>';
+      const { group, content } = createComponentTestGroup('Outputs', boundaries.outputs.length);
       for (const output of boundaries.outputs) {
         const row = document.createElement('div');
         row.className = 'component-test-row';
         const component = circuit().components.get(output.componentId);
         const value = trit(component?.state?.value);
         row.innerHTML = `<span class="component-test-name">${output.name}</span><span class="component-test-value" data-output-id="${output.componentId}">${fmt(value)}</span>`;
-        group.appendChild(row);
+        content.appendChild(row);
       }
       componentTestPanel.appendChild(group);
 
-      const expected = document.createElement('div');
-      expected.className = 'component-test-group component-test-expected';
-      expected.innerHTML = '<h3>Expected outputs for next saved case</h3>';
+      const { group: expected, content: expectedContent } = createComponentTestGroup('Expected outputs for next saved case', boundaries.outputs.length);
       for (const output of boundaries.outputs) {
         const row = document.createElement('div');
         row.className = 'component-test-row';
@@ -808,7 +823,7 @@
           button.addEventListener('click', () => { componentTestDraftExpected[output.componentId] = value; renderComponentTestPanel(); });
           choices.appendChild(button);
         }
-        expected.appendChild(row);
+        expectedContent.appendChild(row);
       }
       componentTestPanel.appendChild(expected);
     }
@@ -1233,6 +1248,42 @@
     return `${base}-${Date.now().toString(36)}`;
   }
 
+  const projectNameKey = (name) => sanitizeProjectName(name).toLocaleLowerCase();
+
+  async function projectNameTaken(name, exceptId = currentProjectId) {
+    const key = projectNameKey(name);
+    const projects = await storage.list();
+    return projects.some((entry) => entry.id !== exceptId && projectNameKey(entry.project?.projectName || entry.id) === key);
+  }
+
+  async function nextAvailableProjectName(base = 'New project') {
+    const cleanBase = sanitizeProjectName(base);
+    const projects = await storage.list();
+    const used = new Set(projects.map((entry) => projectNameKey(entry.project?.projectName || entry.id)));
+    if (!used.has(projectNameKey(cleanBase))) return cleanBase;
+    for (let number = 2; ; number += 1) {
+      const candidate = `${cleanBase} ${number}`;
+      if (!used.has(projectNameKey(candidate))) return candidate;
+    }
+  }
+
+  async function renameCurrentProject() {
+    const requested = sanitizeProjectName(projectNameInput.value);
+    if (projectNameKey(requested) === projectNameKey(currentProjectName)) {
+      projectNameInput.value = currentProjectName;
+      return;
+    }
+    if (await projectNameTaken(requested)) {
+      projectNameInput.value = currentProjectName;
+      setStatus(`Project name “${requested}” is already in use. Choose a different name.`, true);
+      return;
+    }
+    currentProjectName = requested;
+    projectNameInput.value = currentProjectName;
+    await saveProject({ quiet: true });
+    setStatus(`Renamed project to “${currentProjectName}”.`);
+  }
+
   function migrateProject(rawProject) {
     const project = clone(rawProject || {});
     const version = Number(project.formatVersion || project.appVersion || 1);
@@ -1292,6 +1343,7 @@
     try {
       if (!currentProjectId) currentProjectId = makeProjectId(currentProjectName);
       currentProjectName = sanitizeProjectName(projectNameInput.value || currentProjectName);
+      if (await projectNameTaken(currentProjectName)) throw new Error(`Project name “${currentProjectName}” is already in use.`);
       projectNameInput.value = currentProjectName;
       const snapshot = projectSnapshot();
       snapshot.projectId = currentProjectId;
@@ -1301,8 +1353,14 @@
       await storage.setMeta('lastProjectId', currentProjectId);
       lastSavedSnapshot = serialized;
       await refreshProjectList();
+      lastProjectError = '';
       if (!quiet) setStatus(`Saved “${currentProjectName}” to IndexedDB.`);
-    } catch (error) { setStatus(`Save failed: ${error.message}`, true); }
+      return true;
+    } catch (error) {
+      lastProjectError = error.message || String(error);
+      setStatus(`Save failed: ${lastProjectError}`, true);
+      return false;
+    }
   }
 
   function clearCustomRegistry() {
@@ -1310,12 +1368,67 @@
     customComponents.clear();
   }
 
+  function resetProjectSessionState() {
+    navigation.length = 0;
+    componentTestDraftComponentId = null;
+    componentTestDraftExpected = {};
+    stateTimeline.length = 0;
+    renderStateTimeline();
+  }
+
+  function recoverMissingCustomComponents(project, incomingComponents) {
+    // Older autosaves can contain an instance of a demo component while its
+    // reusable definition was not persisted. Rebuild a safe passthrough
+    // definition from the saved port contract so the project remains loadable.
+    const missing = new Map();
+    const registeredTypes = new Set([...incomingComponents.values()].map((meta) => meta.type));
+    const inspect = (data) => {
+      for (const raw of data?.components || []) {
+        if (!String(raw.type || '').startsWith('custom:')) continue;
+        // The early 6-trit-word demo could save a malformed inner definition.
+        // Its public contract is intentionally a pure six-lane passthrough, so
+        // always reconstruct this known demo type from its saved ports.
+        const isLegacySixTritWord = String(raw.type).startsWith('custom:6-trit-word-');
+        if (isLegacySixTritWord || !registeredTypes.has(raw.type)) missing.set(raw.type, raw);
+      }
+    };
+    inspect(project.rootCircuit || project.circuit);
+    for (const meta of incomingComponents.values()) inspect(meta.circuit);
+
+    const recovered = [];
+    for (const [type, raw] of missing) {
+      const id = type.slice('custom:'.length);
+      const inputs = Object.keys(raw.inputs || {});
+      const outputs = Object.keys(raw.outputs || {});
+      const inner = new Circuit(registry);
+      const inputNodes = new Map(inputs.map((name, index) => [name, inner.addComponent('component-input', -240, index * 60, { name })]));
+      outputs.forEach((name, index) => {
+        const output = inner.addComponent('component-output', 240, index * 60, { name });
+        const inputIterator = inputNodes.values().next();
+        const source = inputNodes.get(name) || (inputIterator.done ? null : inputIterator.value);
+        if (source) inner.connect(source.id, 'out', output.id, 'in');
+      });
+      const label = raw.state?.label || ('Recovered ' + id);
+      const meta = {
+        id, type, label, circuit: inner.serialize(), recovered: true,
+        experiment: {
+          role: 'recovered compatibility component', nodeCount: 0, depth: 0, primitiveCounts: {},
+          rationale: 'The original reusable definition was absent from this saved project. The loader reconstructed a safe port-preserving passthrough so the project can open.',
+          validation: 'Recovered automatically from the saved component port contract; inspect and rebuild its internal logic before relying on it.',
+        },
+      };
+      incomingComponents.set(id, meta);
+      recovered.push(label);
+    }
+    return recovered;
+  }
   function applyProject(project, { id = null, savedAt = null } = {}) {
     project = migrateProject(project);
     const incomingComponents = new Map((project.customComponents || []).map((meta) => [meta.id, clone(meta)]));
+    const recoveredComponents = recoverMissingCustomComponents(project, incomingComponents);
     const cycle = customRecursionPath(null, null, incomingComponents);
     if (cycle) throw new Error(`Custom component recursion is not allowed: ${recursionMessage(cycle, incomingComponents)}.`);
-    navigation.length = 0;
+    resetProjectSessionState();
     clearCustomRegistry();
     for (const meta of incomingComponents.values()) customComponents.set(meta.id, meta);
     for (const meta of customComponents.values()) registerCustom(meta);
@@ -1334,7 +1447,9 @@
     lastSavedSnapshot = JSON.stringify(projectSnapshot());
     storage.setMeta('lastProjectId', currentProjectId).catch(() => {});
     refreshProjectList().catch(() => {});
-    setStatus(savedAt ? `Loaded “${currentProjectName}” saved ${new Date(savedAt).toLocaleString()}.` : `Loaded “${currentProjectName}”.`);
+    const recoveryNote = recoveredComponents.length ? ' Recovered ' + recoveredComponents.length + ' missing reusable component definition' + (recoveredComponents.length === 1 ? '' : 's') + ': ' + recoveredComponents.join(', ') + '.' : '';
+    setStatus((savedAt ? `Loaded “${currentProjectName}” saved ${new Date(savedAt).toLocaleString()}.` : `Loaded “${currentProjectName}”.`) + recoveryNote, Boolean(recoveredComponents.length));
+    return { recoveredComponents };
   }
 
   async function loadProject(id = null) {
@@ -1349,14 +1464,25 @@
   async function switchProject(id) {
     const targetId = String(id || '');
     if (!targetId || targetId === currentProjectId || projectActionBusy) return;
+    const targetName = projectSelect.options[projectSelect.selectedIndex]?.textContent || targetId;
     projectActionBusy = true;
     try {
+      setProjectMessage(`Switching to “${targetName}”…`);
       setStatus('Loading project…');
-      if (!saveCurrentCustomDefinition()) return;
-      await saveProject({ quiet: true });
-      await loadProject(targetId);
+      if (!saveCurrentCustomDefinition()) throw new Error('The current reusable component has an invalid interface and could not be saved.');
+      if (!await saveProject({ quiet: true })) throw new Error(`Could not save the current project: ${lastProjectError || 'unknown storage error'}`);
+      const saved = await storage.load(targetId);
+      if (!saved) throw new Error(`No locally saved project exists with id “${targetId}”.`);
+      const loaded = applyProject(saved.project, { id: saved.id, savedAt: saved.savedAt });
+      const repaired = loaded.recoveredComponents || [];
+      setProjectMessage(repaired.length
+        ? `Now editing “${currentProjectName}”. Recovered missing component definition${repaired.length === 1 ? '' : 's'}: ${repaired.join(', ')}. Open the recovered component and rebuild it before relying on its logic.`
+        : `Now editing “${currentProjectName}”.`, Boolean(repaired.length));
     } catch (error) {
-      setStatus(`Could not switch project: ${error.message}`, true);
+      const detail = error.message || String(error);
+      projectSelect.value = currentProjectId;
+      setProjectMessage(`Could not switch to “${targetName}”: ${detail}`, true);
+      setStatus(`Project switch failed: ${detail}`, true);
     } finally {
       projectActionBusy = false;
     }
@@ -1366,15 +1492,19 @@
     if (projectActionBusy) return;
     projectActionBusy = true;
     try {
+      setProjectMessage('Creating a new empty project…');
       setStatus('Creating new project…');
       if (saveCurrent) {
         if (!saveCurrentCustomDefinition()) return;
-        await saveProject({ quiet: true });
+        if (!await saveProject({ quiet: true })) return;
       }
-      navigation.length = 0;
+      // Clear the old circuit before replacing it. Its saved project remains
+      // intact, while both the data model and renderer are forced to empty.
+      rootCircuit.clear();
+      resetProjectSessionState();
       clearCustomRegistry();
       rootCircuit = new Circuit(registry);
-      currentProjectName = 'New project';
+      currentProjectName = await nextAvailableProjectName('New project');
       currentProjectId = makeProjectId(currentProjectName);
       projectNameInput.value = currentProjectName;
       testSuites = [];
@@ -1382,10 +1512,12 @@
       primitiveExperiment.customTypes = new Set(EXPERIMENTAL_PRIMITIVES);
       renderPrimitiveSetControls(); renderLibrary();
       switchContext({ kind: 'root', label: 'Project', circuit: rootCircuit, customId: null });
+      renderer.rebuild();
       resetHistory();
       lastSavedSnapshot = '';
-      await saveProject({ quiet: true });
-      setStatus('Created a new empty project. Rename it in the project-name field; changes autosave.');
+      if (!await saveProject({ quiet: true })) return;
+      setProjectMessage(`Now editing empty project “${currentProjectName}”.`);
+      setStatus('Created a new empty project. The canvas has no components or wires. Rename it in the project-name field; changes autosave.');
     } catch (error) {
       setStatus(`Could not create project: ${error.message}`, true);
     } finally {
@@ -1439,7 +1571,8 @@
     try {
       const text = await file.text();
       const imported = migrateProject(JSON.parse(text));
-      imported.projectName = sanitizeProjectName(imported.projectName || file.name.replace(/\.ternary\.json$|\.json$/i, '') || 'Imported project');
+      const importedName = sanitizeProjectName(imported.projectName || file.name.replace(/\.ternary\.json$|\.json$/i, '') || 'Imported project');
+      imported.projectName = await nextAvailableProjectName(importedName);
       imported.projectId = makeProjectId(imported.projectName);
       applyProject(imported, { id: imported.projectId });
       await saveProject({ quiet: true });
@@ -1451,7 +1584,9 @@
   async function autosaveIfChanged() {
     if (!renderer || !currentProjectId) return;
     try {
-      currentProjectName = sanitizeProjectName(projectNameInput.value || currentProjectName);
+      // A project name is committed by its change handler, not while the user
+      // is still typing. This keeps duplicate-name validation deterministic.
+      if (projectNameKey(projectNameInput.value) !== projectNameKey(currentProjectName)) return;
       const snapshot = projectSnapshot();
       snapshot.projectName = currentProjectName;
       const serialized = JSON.stringify(snapshot);
@@ -1490,6 +1625,8 @@
     if ($('demoSelect').value === 'seven-segment') return buildSevenSegmentDemo();
     if ($('demoSelect').value === 'one-trit-display') return buildOneTritDisplayDemo();
     if ($('demoSelect').value === 'three-trit-display') return buildThreeTritDisplayDemo();
+    if ($('demoSelect').value === 'six-trit-word') return buildSixTritWordDemo();
+    if ($('demoSelect').value === 'six-trit-adder') return buildSixTritAdderDemo();
     if ($('demoSelect').value === 'structural-storage') return buildStructuralStorageDemo();
     const label = uniqueName('Ternary Full Adder', [...customComponents.values()].map((meta) => meta.label), 'Ternary Full Adder');
     const id = `${slug(label)}-${Date.now().toString(36)}`;
@@ -1749,6 +1886,140 @@
     rootCircuit.connect(detector.id, 'neg', negProbe.id, 'in'); rootCircuit.connect(detector.id, 'zero', zeroProbe.id, 'in'); rootCircuit.connect(detector.id, 'pos', posProbe.id, 'in');
     renderer.select(null); renderLibrary(); updateStats(); resetHistory();
     setStatus('Device cell demo loaded. Inspect ideal level detection/restoration, pass switching and gated storage before choosing a transistor technology.');
+  }
+
+  function addSixTritWordCases(componentId, inputs, outputs) {
+    const cases = [];
+    for (const t5 of [-1, 0, 1]) for (const t4 of [-1, 0, 1]) for (const t3 of [-1, 0, 1]) {
+      for (const t2 of [-1, 0, 1]) for (const t1 of [-1, 0, 1]) for (const t0 of [-1, 0, 1]) {
+        const values = [t5, t4, t3, t2, t1, t0];
+        const inputValues = Object.fromEntries(inputs.map((input, index) => [input.id, values[index]]));
+        const expectedOutputs = Object.fromEntries(outputs.map((output, index) => [output.id, values[index]]));
+        cases.push({ id: `word-${values.join('-')}`, name: `word ${values.map(fmt).join(' ')}`, inputs: inputValues, expectedOutputs });
+      }
+    }
+    testSuites = testSuites.filter((suite) => suite.componentId !== componentId);
+    testSuites.push({ componentId, cases });
+  }
+
+  function buildSixTritWordDemo() {
+    // A word is a named bundle of six independent balanced-trit lanes. It has
+    // no storage or arithmetic; those belong to the register and ALU layers.
+    const label = uniqueName('6-trit word', [...customComponents.values()].map((meta) => meta.label), '6-trit word');
+    const id = `${slug(label)}-${Date.now().toString(36)}`;
+    const inner = new Circuit(registry);
+    const names = ['t5', 't4', 't3', 't2', 't1', 't0'];
+    const weights = [243, 81, 27, 9, 3, 1];
+    const inputs = names.map((name, index) => inner.addComponent('component-input', -290, -145 + index * 58, { name, label: `${name} (${weights[index]})` }));
+    const outputs = names.map((name, index) => inner.addComponent('component-output', 290, -145 + index * 58, { name, label: `${name} (${weights[index]})` }));
+    inputs.forEach((input, index) => inner.connect(input.id, 'out', outputs[index].id, 'in'));
+    const meta = {
+      id, type: `custom:${id}`, label, circuit: inner.serialize(),
+      experiment: {
+        role: 'word interface', nodeCount: 0, depth: 0, primitiveCounts: {},
+        metrics: { nodes: 0, depth: 0, wires: inner.wires.size, transitions: 0, transitionScenario: 'a passive word interface does not change a trit' },
+        rationale: 'Names and orders six parallel balanced-trit lanes without inventing hidden storage or logic. t5 is the most-significant trit (weight 243) and t0 is the least-significant trit (weight 1).',
+        validation: 'Exhaustive 729/729 words preserve each lane unchanged.',
+      },
+    };
+    customComponents.set(id, meta); registerCustom(meta); addSixTritWordCases(id, inputs, outputs);
+    const initial = [1, 0, 0, 0, 0, 0];
+    const controls = names.map((name, index) => rootCircuit.addComponent('trit-input', -390, -145 + index * 58, { value: initial[index], label: `${name} · ${weights[index]}s` }));
+    const word = rootCircuit.addComponent(meta.type, -20, -165, { label });
+    const probes = names.map((name, index) => rootCircuit.addComponent('probe', 270, -145 + index * 58, { label: `${name} out` }));
+    controls.forEach((control, index) => rootCircuit.connect(control.id, 'out', word.id, names[index]));
+    probes.forEach((probe, index) => rootCircuit.connect(word.id, names[index], probe.id, 'in'));
+    renderer.select(null); renderLibrary(); updateStats(); resetHistory();
+    setStatus('6-trit word component loaded. It preserves six named lanes (t5…t0, weights 243…1); all 729 possible words are saved as contract cases. Open it to inspect the explicit word boundary.');
+  }
+
+  function balancedWordDigits(value, width = 6) {
+    const digits = [];
+    let remaining = Number(value);
+    for (let index = 0; index < width; index += 1) {
+      const remainder = ((remaining % 3) + 3) % 3;
+      const digit = remainder === 2 ? -1 : remainder;
+      digits.unshift(digit);
+      remaining = (remaining - digit) / 3;
+    }
+    if (remaining !== 0) throw new Error(`${value} does not fit in ${width} balanced trits.`);
+    return digits;
+  }
+
+  function addSixTritAdderCases(componentId, aInputs, bInputs, carryInput, sumOutputs, carryOutput) {
+    const vectors = [
+      { name: 'zero + zero', a: 0, b: 0, carry: 0 },
+      { name: 'one + one', a: 1, b: 1, carry: 0 },
+      { name: 'positive ripple', a: 364, b: 1, carry: 0 },
+      { name: 'negative ripple', a: -364, b: -1, carry: 0 },
+      { name: 'full positive overflow', a: 364, b: 364, carry: 1 },
+      { name: 'full negative overflow', a: -364, b: -364, carry: -1 },
+      { name: 'mixed signs with carry in', a: 123, b: -45, carry: 1 },
+    ];
+    const cases = vectors.map((vector) => {
+      const a = balancedWordDigits(vector.a), b = balancedWordDigits(vector.b);
+      const raw = vector.a + vector.b + vector.carry;
+      const carry = raw < -364 ? -1 : raw > 364 ? 1 : 0;
+      const sum = balancedWordDigits(raw - 729 * carry);
+      return {
+        id: `six-trit-add-${vector.a}-${vector.b}-${vector.carry}`, name: vector.name,
+        inputs: { ...Object.fromEntries(aInputs.map((input, index) => [input.id, a[index]])), ...Object.fromEntries(bInputs.map((input, index) => [input.id, b[index]])), [carryInput.id]: vector.carry },
+        expectedOutputs: { ...Object.fromEntries(sumOutputs.map((output, index) => [output.id, sum[index]])), [carryOutput.id]: carry },
+      };
+    });
+    testSuites = testSuites.filter((suite) => suite.componentId !== componentId);
+    testSuites.push({ componentId, cases });
+  }
+
+  function buildSixTritAdderDemo() {
+    const label = uniqueName('6-trit ripple adder', [...customComponents.values()].map((meta) => meta.label), '6-trit ripple adder');
+    const id = `${slug(label)}-${Date.now().toString(36)}`;
+    const inner = new Circuit(registry);
+    const names = ['t5', 't4', 't3', 't2', 't1', 't0'];
+    const weights = [243, 81, 27, 9, 3, 1];
+    const aInputs = names.map((name, index) => inner.addComponent('component-input', -480, -250 + index * 86, { name: `a${name.slice(1)}`, label: `A${name.slice(1)} (${weights[index]})` }));
+    const bInputs = names.map((name, index) => inner.addComponent('component-input', -350, -250 + index * 86, { name: `b${name.slice(1)}`, label: `B${name.slice(1)} (${weights[index]})` }));
+    const carryInput = inner.addComponent('component-input', -480, 300, { name: 'carryIn', label: 'Carry in' });
+    const adders = names.map((name, index) => inner.addComponent('normalize-carry', -20, -250 + index * 86, { label: `Add ${name}` }));
+    const sumOutputs = names.map((name, index) => inner.addComponent('component-output', 250, -250 + index * 86, { name: `s${name.slice(1)}`, label: `Sum ${name.slice(1)}` }));
+    const carryOutput = inner.addComponent('component-output', 250, -330, { name: 'carryOut', label: 'Carry out' });
+    for (let index = 0; index < names.length; index += 1) {
+      inner.connect(aInputs[index].id, 'out', adders[index].id, 'a');
+      inner.connect(bInputs[index].id, 'out', adders[index].id, 'b');
+      inner.connect(adders[index].id, 'sum', sumOutputs[index].id, 'in');
+      if (index === names.length - 1) inner.connect(carryInput.id, 'out', adders[index].id, 'c');
+      else inner.connect(adders[index + 1].id, 'carry', adders[index].id, 'c');
+    }
+    inner.connect(adders[0].id, 'carry', carryOutput.id, 'in');
+    const meta = {
+      id, type: `custom:${id}`, label, circuit: inner.serialize(),
+      experiment: {
+        role: 'six-trit arithmetic building block', nodeCount: 6, depth: 6, primitiveCounts: { 'normalize-carry': 6 },
+        metrics: { nodes: 6, depth: 6, wires: inner.wires.size, transitions: 0, transitionScenario: 'static arithmetic result; transition count intentionally not measured yet' },
+        rationale: 'Six Normalize / carry cells form a least-significant-to-most-significant ripple chain. Each cell keeps its sum trit and forwards only balanced carry to the next weight.',
+        validation: 'Each cell uses the 27-case full-adder contract; saved word cases cover zero, mixed-sign addition and both word-boundary overflows.',
+      },
+    };
+    customComponents.set(id, meta); registerCustom(meta); addSixTritAdderCases(id, aInputs, bInputs, carryInput, sumOutputs, carryOutput);
+    const aValue = 1, bValue = 1, carryValue = 0;
+    const aDigits = balancedWordDigits(aValue), bDigits = balancedWordDigits(bValue);
+    const controls = [
+      ...names.map((name, index) => rootCircuit.addComponent('trit-input', -500, -250 + index * 58, { value: aDigits[index], label: `A${name.slice(1)} · ${weights[index]}s` })),
+      ...names.map((name, index) => rootCircuit.addComponent('trit-input', -350, -250 + index * 58, { value: bDigits[index], label: `B${name.slice(1)} · ${weights[index]}s` })),
+      rootCircuit.addComponent('trit-input', -500, 130, { value: carryValue, label: 'Carry in' }),
+    ];
+    const adder = rootCircuit.addComponent(meta.type, -20, -270, { label });
+    const probes = [
+      ...names.map((name, index) => rootCircuit.addComponent('probe', 280, -250 + index * 58, { label: `Sum ${name.slice(1)}` })),
+      rootCircuit.addComponent('probe', 280, 130, { label: 'Carry out' }),
+    ];
+    aInputs.forEach((input, index) => rootCircuit.connect(controls[index].id, 'out', adder.id, input.state.name));
+    bInputs.forEach((input, index) => rootCircuit.connect(controls[index + 6].id, 'out', adder.id, input.state.name));
+    rootCircuit.connect(controls[12].id, 'out', adder.id, 'carryIn');
+    sumOutputs.forEach((output, index) => rootCircuit.connect(adder.id, output.state.name, probes[index].id, 'in'));
+    rootCircuit.connect(adder.id, 'carryOut', probes[6].id, 'in');
+    renderer.select(null); renderLibrary(); updateStats(); resetHistory();
+    setStatus('6-trit ripple adder loaded. Set A, B and Carry in; inspect Sum t5…t0 and Carry out. Open the component to follow the six Normalize / carry cells from t0 toward t5.');
   }
 
   function buildSevenSegmentDemo() {
@@ -2175,8 +2446,15 @@
     backBtn.addEventListener('click', goBack);
     $('saveBtn').addEventListener('click', () => saveProject());
     $('loadBtn').addEventListener('click', () => loadProject());
+    const toolbarMenus = [...document.querySelectorAll('.toolbar-menu')];
+    const closeOtherToolbarMenus = (active) => toolbarMenus.forEach((menu) => { if (menu !== active) menu.open = false; });
+    toolbarMenus.forEach((menu) => {
+      // Close on the summary click itself; this works consistently even where
+      // the native <details> toggle event is delayed or not dispatched.
+      menu.querySelector('summary').addEventListener('click', () => closeOtherToolbarMenus(menu));
+    });
     projectSelect.addEventListener('change', () => switchProject(projectSelect.value));
-    projectNameInput.addEventListener('change', () => { currentProjectName = sanitizeProjectName(projectNameInput.value); projectNameInput.value = currentProjectName; autosaveIfChanged(); });
+    projectNameInput.addEventListener('change', () => { renameCurrentProject().catch((error) => setStatus(`Could not rename project: ${error.message}`, true)); });
     $('exportBtn').addEventListener('click', exportProject);
     $('importBtn').addEventListener('click', () => importFile.click());
     importFile.addEventListener('change', () => { const file = importFile.files?.[0]; if (file) importProjectFile(file); });

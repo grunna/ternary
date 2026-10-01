@@ -12,41 +12,70 @@
       <strong>Ternary Lab</strong>
       <span>balanced ternary circuit sandbox</span>
     </div>
-    <div class="toolbar" aria-label="Project actions">
-      <div class="toolbar-group project-actions" aria-label="Project">
-        <label class="project-picker" title="Active project">
-          <select id="projectSelect" aria-label="Active project"></select>
-        </label>
-        <input id="projectName" class="project-name" type="text" value="Project 1" aria-label="Project name" />
-        <button id="newProjectBtn">New project</button>
-        <button id="deleteProjectBtn" class="danger">Delete project</button>
-      </div>
-      <div class="toolbar-group" aria-label="Circuit structure">
-        <button id="newComponentBtn">New component</button>
-        <button id="autoLayoutBtn" title="Arrange by signal layers">Auto layout</button>
-        <button id="backBtn" disabled>Back</button>
-      </div>
-      <div class="toolbar-group compact-actions" aria-label="Edit actions">
-        <button id="undoBtn" disabled title="Undo (Ctrl/Cmd+Z)" aria-label="Undo">Undo</button>
-        <button id="redoBtn" disabled title="Redo (Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z)" aria-label="Redo">Redo</button>
-        <button id="copyBtn" disabled title="Copy (Ctrl/Cmd+C)" aria-label="Copy">Copy</button>
-        <button id="pasteBtn" disabled title="Paste (Ctrl/Cmd+V)" aria-label="Paste">Paste</button>
-      </div>
-      <div class="toolbar-group file-actions" aria-label="File actions">
-        <button id="loadBtn">Load</button>
-        <button id="saveBtn">Save</button>
-        <button id="exportBtn">Export</button>
-        <button id="importBtn">Import</button>
-      </div>
+    <div class="toolbar" aria-label="Application actions">
+      <details class="toolbar-menu project-menu">
+        <summary>Project</summary>
+        <div class="toolbar-menu-panel">
+          <div class="toolbar-group project-actions" aria-label="Project">
+            <label class="menu-field project-picker"><span>Open project</span><select id="projectSelect" aria-label="Active project"></select></label>
+            <label class="menu-field"><span>Project name</span><input id="projectName" class="project-name" type="text" value="Project 1" aria-label="Project name" /></label>
+            <button id="newProjectBtn" class="menu-primary">New project</button>
+            <button id="deleteProjectBtn" class="danger">Delete project</button>
+            <div id="projectMessage" class="project-message" role="status" aria-live="polite" hidden></div>
+          </div>
+        </div>
+      </details>
+      <details class="toolbar-menu">
+        <summary>Circuit</summary>
+        <div class="toolbar-menu-panel">
+          <div class="toolbar-group" aria-label="Circuit structure">
+            <button id="newComponentBtn">New component</button>
+            <button id="autoLayoutBtn" title="Arrange by signal layers">Auto layout</button>
+            <button id="backBtn" disabled>Back</button>
+          </div>
+        </div>
+      </details>
+      <details class="toolbar-menu">
+        <summary>Edit</summary>
+        <div class="toolbar-menu-panel">
+          <div class="toolbar-group compact-actions" aria-label="Edit actions">
+            <button id="undoBtn" disabled title="Undo (Ctrl/Cmd+Z)" aria-label="Undo">Undo</button>
+            <button id="redoBtn" disabled title="Redo (Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z)" aria-label="Redo">Redo</button>
+            <button id="copyBtn" disabled title="Copy (Ctrl/Cmd+C)" aria-label="Copy">Copy</button>
+            <button id="pasteBtn" disabled title="Paste (Ctrl/Cmd+V)" aria-label="Paste">Paste</button>
+          </div>
+        </div>
+      </details>
+      <details class="toolbar-menu">
+        <summary>File</summary>
+        <div class="toolbar-menu-panel">
+          <div class="toolbar-group file-actions" aria-label="File actions">
+            <button id="loadBtn">Load</button>
+            <button id="saveBtn">Save</button>
+            <button id="exportBtn">Export</button>
+            <button id="importBtn">Import</button>
+          </div>
+        </div>
+      </details>
       <input id="importFile" type="file" accept="application/json,.json" hidden />
-      <div class="toolbar-group utility-actions" aria-label="Other actions">
-        <select id="demoSelect" aria-label="Demo example"><option value="full-adder">Full adder reference</option><option value="adder-comparison">Adder comparison</option><option value="primitive-set-comparison">Primitive set comparison</option><option value="comparator-comparison">Comparator comparison</option><option value="selector-router">Selector / router</option><option value="control-signals">Ternary control signals</option><option value="sequential-storage">Ternary latch / register</option><option value="register-bank">Ternary register bank</option><option value="device-cells">Ternary device cells</option><option value="seven-segment">7-segment display</option><option value="one-trit-display">1-trit signed display decoder</option><option value="three-trit-display">3-trit signed display decoder</option><option value="structural-storage">Structural latch / register</option><option value="compare">Compare</option></select>
-        <button id="demoBtn">Load demo</button>
-      </div>
-      <div class="toolbar-group danger-actions" aria-label="Destructive actions">
-        <button id="deleteBtn" class="danger" disabled>Delete</button>
-        <button id="clearBtn" class="danger">Clear</button>
-      </div>
+      <details class="toolbar-menu demo-menu">
+        <summary>Demo</summary>
+        <div class="toolbar-menu-panel">
+          <div class="toolbar-group utility-actions" aria-label="Demo actions">
+            <select id="demoSelect" aria-label="Demo example"><option value="full-adder">Full adder reference</option><option value="adder-comparison">Adder comparison</option><option value="primitive-set-comparison">Primitive set comparison</option><option value="comparator-comparison">Comparator comparison</option><option value="selector-router">Selector / router</option><option value="control-signals">Ternary control signals</option><option value="sequential-storage">Ternary latch / register</option><option value="register-bank">Ternary register bank</option><option value="device-cells">Ternary device cells</option><option value="seven-segment">7-segment display</option><option value="one-trit-display">1-trit signed display decoder</option><option value="three-trit-display">3-trit signed display decoder</option><option value="six-trit-word">6-trit word component</option><option value="six-trit-adder">6-trit ripple adder</option><option value="structural-storage">Structural latch / register</option><option value="compare">Compare</option></select>
+            <button id="demoBtn">Load demo</button>
+          </div>
+        </div>
+      </details>
+      <details class="toolbar-menu more-menu">
+        <summary>More</summary>
+        <div class="toolbar-menu-panel">
+          <div class="toolbar-group danger-actions" aria-label="Destructive actions">
+            <button id="deleteBtn" class="danger" disabled>Delete selected</button>
+            <button id="clearBtn" class="danger">Clear circuit</button>
+          </div>
+        </div>
+      </details>
     </div>
   </header>
 

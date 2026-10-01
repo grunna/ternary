@@ -201,11 +201,15 @@ The simulator stops at idealized structural cells. It does not model transistors
 - [x] Validate all 27 input words for the fixed-range three-trit decoder
 - [x] Verify all three decoder cases: `-1`, `0`, `+1`
 - [x] Record the two-state segment-control boundary
-- [ ] Decide how a multi-trit value is shown natively
-- [ ] Defer balanced-ternary → decimal conversion until multi-trit arithmetic exists
+- [x] Decide how a multi-trit value is shown natively: one visible `− / 0 / +` glyph per trit, most-significant first
+- [x] Defer balanced-ternary → decimal conversion until multi-trit arithmetic exists; treat it as an optional debugger/peripheral adapter
 
 ## Phase 16B — CPU building blocks
-- [ ] Native ternary adder
+- [x] Fix the first CPU word width at 6 balanced trits (`−364 … +364`)
+- [x] Build an opening reusable 6-trit word component
+- [x] Validate all 729 six-trit words at the word boundary
+- [ ] Use three decimal display positions for the future `−364 … +364` peripheral
+- [x] Native ternary adder — opening 6-trit Normalize / carry ripple chain
 - [ ] Negation/subtraction strategy
 - [ ] Comparator
 - [ ] Selector/router network

@@ -152,7 +152,7 @@ Preset sets include **All candidates**, **MIN / MAX**, **Compare / Select**, **A
 
 ## Project persistence
 
-Projects are stored locally in the browser with IndexedDB. **New project** creates a separate empty project; choose a project in the top-left picker and use **Delete project** to remove it after confirmation. The active project is autosaved when it changes and the most recently used project is reopened on the next start.
+Projects are stored locally in the browser with IndexedDB. **New project** creates a separate empty project with the next available name (`New project`, `New project 2`, and so on); duplicate project names are rejected. Choose a project in the **Project** menu and use **Delete project** to remove it after confirmation. The active project is autosaved when it changes and the most recently used project is reopened on the next start.
 
 - Use **New project** to create another named project.
 - Rename the current project in the name field in the top toolbar.
@@ -181,6 +181,18 @@ Choose **7-segment display** to load a visible output component with eight indep
 Choose **1-trit signed display decoder** for the smallest open decoder. Its sole trit maps to `-1`, `0` and `+1`. Open it to see the complete construction: `Threshold3` produces one-hot rails, `MAX` creates the shared segments for digit 1, and `MIN` produces an explicit off signal for the middle segment. Its three input cases are checked exhaustively.
 
 Choose **3-trit signed display decoder** to load an opening fixed-range experiment. Its inputs have weights `9`, `3` and `1`; the 19 words for `-9 … +9` show a signed decimal digit, while the eight remaining three-trit words are blank. Its gate-level mapping has been checked across all 27 input words. Open the component to inspect the full gate network: three level detectors, exact-match MIN chains, and MAX trees for each segment.
+
+**First CPU word decision:** the first CPU uses six balanced trits, covering `−364 … +364` (729 states). It is deliberately small enough to keep the first register, ALU and display experiments open and understandable.
+
+**Native multi-trit display decision:** CPU words will be shown directly as a row of `−`, `0` and `+` glyphs, one per trit with the most-significant trit on the left. For example, `+ 0 −` means `(+1 × 9) + (0 × 3) + (−1 × 1) = +8`. This has no separate sign trit and requires no number conversion. Balanced-ternary-to-decimal display is deferred until multi-trit arithmetic exists. It will be an optional, opening peripheral made from reusable parts: a six-trit word converter, digit decoders and three 7-segment displays. Three decimal positions comfortably cover the first CPU range, `−364 … +364`.
+
+## Six-trit CPU word
+
+Choose **6-trit word component** to load the reusable word boundary for the first CPU. It carries `t5 … t0` unchanged in most-significant-first order, with weights `243, 81, 27, 9, 3, 1`. It is intentionally neither a register nor an ALU: it establishes a clear six-lane interface which later reusable components can share. Every one of its 729 possible input words is saved as a contract case.
+
+## Six-trit ripple adder
+
+Choose **6-trit ripple adder** to load the first reusable CPU arithmetic block. It accepts `A5 … A0`, `B5 … B0` and `Carry in`, then produces `Sum5 … Sum0` and `Carry out`. Open it to see six `Normalize / carry` cells. Carry begins at the least-significant `t0` cell and ripples toward `t5`; the output represents `A + B + Carry in = Sum + 729 × Carry out`.
 
 ## Register bank
 
