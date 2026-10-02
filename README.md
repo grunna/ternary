@@ -209,9 +209,43 @@ Choose **6-trit word component** to load the reusable word boundary for the firs
 
 Choose **6-trit ripple adder** to load the first reusable CPU arithmetic block. It accepts `A5 … A0`, `B5 … B0` and `Carry in`, then produces `Sum5 … Sum0` and `Carry out`. Open it to see six `Normalize / carry` cells. Carry begins at the least-significant `t0` cell and ripples toward `t5`; the output represents `A + B + Carry in = Sum + 729 × Carry out`.
 
+`Carry out` is a signed extension trit, not a binary overflow bit: `-1` means the mathematical result is below `−364`, `0` means it fits, and `+1` means it is above `+364`. The visible six-trit result is always the canonical modulo-729 result; arithmetic does not silently saturate or trap. The subtractor uses the same convention: `Carry out = -1` is negative underflow (the borrow direction), while `+1` is positive overflow.
+
 ## Six-trit negate / subtract
 
 Choose **6-trit negate / subtract** to load two nested reusable arithmetic blocks. **6-trit negate** flips each balanced trit independently and has no carry path. **6-trit subtractor** connects that negated B word to six `Normalize / carry` cells, so it computes `A − B + Carry in = Difference + 729 × Carry out`. Open the subtractor and then its negator to inspect both levels.
+
+## Six-trit comparator
+
+Choose **6-trit comparator** to load the reusable word comparator. Its native `Order` output is `-1` for less-than, `0` for equality and `+1` for greater-than. It also provides one-hot `Less`, `Equal` and `Greater` outputs using the explicit `0 / +1` control convention. Open it to see six `Compare` blocks and the five `Select3` stages that retain the first non-equal result from `t5` toward `t0`.
+
+## Six-trit Select3
+
+Choose **6-trit Select3** to load the reusable word selector. Its one shared select trit chooses the complete `Neg`, `Zero` or `Pos` input word: `-1`, `0` and `+1` respectively. Open it to see the six parallel Select3 cells; no binary-style control decode is introduced.
+
+## Six-trit Route3
+
+Choose **6-trit Route3** to load the matching word read-path router. The shared select trit routes its input word to `Neg`, `Zero` or `Pos`; every lane on the two inactive paths is explicitly `0`. This makes inactive read behavior visible and prevents a path from being mistaken for a floating or retained value.
+
+## First six-trit ALU contract
+
+The first ALU will use one packed balanced operation trit, rather than a binary opcode bundle:
+
+- `−1`: `A − B`
+- `0`: pass `A`
+- `+1`: `A + B`
+
+Addition and subtraction report the existing signed range-extension trit; pass-A reports `0`. An unknown/floating operation, or data used by the selected operation, makes the ALU result unknown. B is intentionally irrelevant for pass-A. Comparisons and condition decisions remain separate reusable components rather than hidden ALU side effects.
+
+Choose **6-trit ALU comparison** to inspect the decision before the ALU is fixed. Candidate A chooses `−B`, `0` or `+B` before one Normalize/carry ripple (19 nodes); Candidate B computes add and subtract in parallel, then chooses a result (26 nodes). Both have depth 8 and the same saved contract vectors, so Candidate A is the selected opening shape.
+
+Choose **6-trit ALU** to load the selected reusable component. Set `Op` to `−1`, `0` or `+1`, then open the component to inspect the selected operand feeding one ripple chain. Its child Negate, Select3 and Normalize/carry components retain their structural-reference actions in the Inspector.
+
+## I/O peripherals
+
+I/O components are explicit external adapters, not extra ternary logic primitives. Inputs drive a declared trit/word value after normal propagation; output devices only observe settled signals and never feed a value back. A clocked peripheral, such as the planned pixel display, changes its own state only on its documented clock edge.
+
+Every I/O device must show `Z` (floating) and `?` (unknown/invalid) distinctly from logical `0`. It must also declare its port contract, reset behavior and update timing in the Inspector.
 
 ## Register bank
 

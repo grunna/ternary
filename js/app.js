@@ -1968,6 +1968,11 @@
     if ($('demoSelect').value === 'six-trit-word') return buildSixTritWordDemo();
     if ($('demoSelect').value === 'six-trit-adder') return buildSixTritAdderDemo();
     if ($('demoSelect').value === 'six-trit-subtractor') return buildSixTritSubtractorDemo();
+    if ($('demoSelect').value === 'six-trit-comparator') return buildSixTritComparatorDemo();
+    if ($('demoSelect').value === 'six-trit-selector') return buildSixTritSelectorDemo();
+    if ($('demoSelect').value === 'six-trit-router') return buildSixTritRouterDemo();
+    if ($('demoSelect').value === 'six-trit-alu-comparison') return buildSixTritAluComparisonDemo();
+    if ($('demoSelect').value === 'six-trit-alu') return buildSixTritAluDemo();
     if ($('demoSelect').value === 'structural-storage') return buildStructuralStorageDemo();
     if ($('demoSelect').value === 'structural-routing') return buildStructuralRoutingDemo();
     const label = uniqueName('Ternary Full Adder', [...customComponents.values()].map((meta) => meta.label), 'Ternary Full Adder');
@@ -2353,8 +2358,8 @@
       experiment: {
         role: 'six-trit arithmetic building block', nodeCount: 6, depth: 6, primitiveCounts: { 'normalize-carry': 6 },
         metrics: { nodes: 6, depth: 6, wires: inner.wires.size, transitions: 0, transitionScenario: 'static arithmetic result; transition count intentionally not measured yet' },
-        rationale: 'Six Normalize / carry cells form a least-significant-to-most-significant ripple chain. Each cell keeps its sum trit and forwards only balanced carry to the next weight.',
-        validation: 'Each cell uses the 27-case full-adder contract; saved word cases cover zero, mixed-sign addition and both word-boundary overflows.',
+        rationale: 'Six Normalize / carry cells form a least-significant-to-most-significant ripple chain. Each cell keeps its sum trit and forwards only balanced carry to the next weight. Carry out is a signed word-extension trit: A + B + Carry in = Sum + 729 × Carry out. It is -1 below the six-trit range, 0 in range, and +1 above it; results wrap canonically rather than saturating or trapping.',
+        validation: 'Each cell uses the 27-case full-adder contract; saved word cases cover zero, mixed-sign addition and both signed word-boundary overflows.',
       },
     };
     customComponents.set(id, meta); registerCustom(meta); addSixTritAdderCases(id, aInputs, bInputs, carryInput, sumOutputs, carryOutput);
@@ -2455,7 +2460,7 @@
     inner.connect(adders[0].id, 'carry', carryOutput.id, 'in');
     const subtractMeta = {
       id: subtractId, type: `custom:${subtractId}`, label: subtractLabel, circuit: inner.serialize(),
-      experiment: { role: 'six-trit arithmetic building block', nodeCount: 12, depth: 7, primitiveCounts: { negate: 6, 'normalize-carry': 6 }, metrics: { nodes: 12, depth: 7, wires: inner.wires.size, transitions: 0, transitionScenario: 'static subtraction result; transition count intentionally not measured yet' }, rationale: 'Subtraction is addition of the digitwise negated B word. The reusable negator feeds the same six-cell Normalize / carry ripple strategy as addition; Carry in supports a ternary adjustment or a later multi-word carry chain.', validation: 'Negator has 729 saved cases; saved subtractor cases cover zero, mixed signs and both word-boundary overflows.' },
+      experiment: { role: 'six-trit arithmetic building block', nodeCount: 12, depth: 7, primitiveCounts: { negate: 6, 'normalize-carry': 6 }, metrics: { nodes: 12, depth: 7, wires: inner.wires.size, transitions: 0, transitionScenario: 'static subtraction result; transition count intentionally not measured yet' }, rationale: 'Subtraction is addition of the digitwise negated B word. The reusable negator feeds the same six-cell Normalize / carry ripple strategy as addition; Carry in supports a ternary adjustment or a later multi-word carry chain. Carry out has the same signed-extension meaning as addition: -1 is a negative underflow (the balanced-ternary borrow direction), 0 is in range and +1 is a positive overflow. It is not a binary no-borrow flag.', validation: 'Negator has 729 saved cases; saved subtractor cases cover zero, mixed signs and both signed word-boundary overflows.' },
     };
     customComponents.set(subtractId, subtractMeta); registerCustom(subtractMeta); addSixTritSubtractCases(subtractId, aInputs, bInputs, carryInput, differenceOutputs, carryOutput);
     const aValue = 1, bValue = 1, carryValue = 0;
@@ -2477,6 +2482,368 @@
     rootCircuit.connect(subtractor.id, 'carryOut', probes[6].id, 'in');
     renderer.select(null); renderLibrary(); updateStats(); resetHistory();
     setStatus('6-trit negate / subtract demo loaded. It computes A − B + Carry in. Open the subtractor, then open 6-trit negate, to inspect digitwise negation feeding the Normalize / carry ripple chain.');
+  }
+
+  function addSixTritComparatorCases(componentId, aInputs, bInputs, outputs) {
+    const vectors = [
+      { name: 'equal zero', a: 0, b: 0 },
+      { name: 'least-significant difference', a: 0, b: 1 },
+      { name: 'least-significant greater', a: 1, b: 0 },
+      { name: 'most-significant difference wins', a: 243, b: 242 },
+      { name: 'negative versus positive', a: -1, b: 1 },
+      { name: 'lower word boundary', a: -364, b: -363 },
+      { name: 'upper word boundary', a: 364, b: 363 },
+      { name: 'equal mixed word', a: -123, b: -123 },
+    ];
+    const cases = vectors.map((vector) => {
+      const order = vector.a < vector.b ? -1 : vector.a > vector.b ? 1 : 0;
+      const a = balancedWordDigits(vector.a), b = balancedWordDigits(vector.b);
+      return {
+        id: `six-trit-compare-${vector.a}-${vector.b}`, name: vector.name,
+        inputs: { ...Object.fromEntries(aInputs.map((input, index) => [input.id, a[index]])), ...Object.fromEntries(bInputs.map((input, index) => [input.id, b[index]])) },
+        expectedOutputs: { [outputs.order.id]: order, [outputs.less.id]: order < 0 ? 1 : 0, [outputs.equal.id]: order === 0 ? 1 : 0, [outputs.greater.id]: order > 0 ? 1 : 0 },
+      };
+    });
+    testSuites = testSuites.filter((suite) => suite.componentId !== componentId);
+    testSuites.push({ componentId, cases });
+  }
+
+  function buildSixTritComparatorDemo() {
+    const label = uniqueName('6-trit comparator', [...customComponents.values()].map((meta) => meta.label), '6-trit comparator');
+    const id = `${slug(label)}-${Date.now().toString(36)}`;
+    const inner = new Circuit(registry);
+    const names = ['t5', 't4', 't3', 't2', 't1', 't0'];
+    const weights = [243, 81, 27, 9, 3, 1];
+    const aInputs = names.map((name, index) => inner.addComponent('component-input', -520, -250 + index * 80, { name: `a${name.slice(1)}`, label: `A${name.slice(1)} (${weights[index]})` }));
+    const bInputs = names.map((name, index) => inner.addComponent('component-input', -390, -250 + index * 80, { name: `b${name.slice(1)}`, label: `B${name.slice(1)} (${weights[index]})` }));
+    const compares = names.map((name, index) => inner.addComponent('compare', -150, -250 + index * 80, { label: `Compare ${name}` }));
+    aInputs.forEach((input, index) => { inner.connect(input.id, 'out', compares[index].id, 'a'); inner.connect(bInputs[index].id, 'out', compares[index].id, 'b'); });
+    let orderSource = compares[names.length - 1];
+    for (let index = names.length - 2; index >= 0; index -= 1) {
+      const choose = inner.addComponent('select3', 60 + (names.length - 2 - index) * 150, -250 + index * 80, { label: `Keep ${names[index]} unless equal` });
+      inner.connect(compares[index].id, 'out', choose.id, 'neg');
+      inner.connect(orderSource.id, 'out', choose.id, 'zero');
+      inner.connect(compares[index].id, 'out', choose.id, 'pos');
+      inner.connect(compares[index].id, 'out', choose.id, 'select');
+      orderSource = choose;
+    }
+    const decode = inner.addComponent('threshold3', 830, 0, { label: 'Decode comparison result' });
+    const order = inner.addComponent('component-output', 1050, -100, { name: 'order', label: 'Order (−1 / 0 / +1)' });
+    const less = inner.addComponent('component-output', 1050, -30, { name: 'less', label: 'Less (0 / +1)' });
+    const equal = inner.addComponent('component-output', 1050, 40, { name: 'equal', label: 'Equal (0 / +1)' });
+    const greater = inner.addComponent('component-output', 1050, 110, { name: 'greater', label: 'Greater (0 / +1)' });
+    inner.connect(orderSource.id, 'out', order.id, 'in');
+    inner.connect(orderSource.id, 'out', decode.id, 'in');
+    inner.connect(decode.id, 'neg', less.id, 'in');
+    inner.connect(decode.id, 'zero', equal.id, 'in');
+    inner.connect(decode.id, 'pos', greater.id, 'in');
+    const outputs = { order, less, equal, greater };
+    const meta = {
+      id, type: `custom:${id}`, label, circuit: inner.serialize(),
+      experiment: {
+        role: 'six-trit control building block', nodeCount: 12, depth: 7, primitiveCounts: { compare: 6, select3: 5, threshold3: 1 },
+        metrics: { nodes: 12, depth: 7, wires: inner.wires.size, transitions: 0, transitionScenario: 'static comparison result; transition count intentionally not measured yet' },
+        rationale: 'Each trit pair is compared with the proven Compare contract. Five Select3 stages scan from t5 to t0: a nonzero higher-order comparison is retained, while equality allows the next lower-order result through. Order is the native balanced control trit (-1 less, 0 equal, +1 greater). Threshold3 exposes one-hot 0/+1 less, equal and greater flags only at the CPU/control boundary.',
+        validation: 'Saved vectors cover equality, least- and most-significant differences, signs and both word boundaries; the word ordering contract is exhaustively checked for all 729 × 729 input pairs in the automated suite.',
+      },
+    };
+    customComponents.set(id, meta); registerCustom(meta); addSixTritComparatorCases(id, aInputs, bInputs, outputs);
+    const aValue = 243, bValue = 242;
+    const aDigits = balancedWordDigits(aValue), bDigits = balancedWordDigits(bValue);
+    const controls = [
+      ...names.map((name, index) => rootCircuit.addComponent('trit-input', -520, -250 + index * 58, { value: aDigits[index], label: `A${name.slice(1)} · ${weights[index]}s` })),
+      ...names.map((name, index) => rootCircuit.addComponent('trit-input', -370, -250 + index * 58, { value: bDigits[index], label: `B${name.slice(1)} · ${weights[index]}s` })),
+    ];
+    const comparator = rootCircuit.addComponent(meta.type, -20, -270, { label });
+    const probes = [
+      rootCircuit.addComponent('probe', 360, -100, { label: 'Order' }), rootCircuit.addComponent('probe', 360, -30, { label: 'Less' }),
+      rootCircuit.addComponent('probe', 360, 40, { label: 'Equal' }), rootCircuit.addComponent('probe', 360, 110, { label: 'Greater' }),
+    ];
+    aInputs.forEach((input, index) => rootCircuit.connect(controls[index].id, 'out', comparator.id, input.state.name));
+    bInputs.forEach((input, index) => rootCircuit.connect(controls[index + 6].id, 'out', comparator.id, input.state.name));
+    ['order', 'less', 'equal', 'greater'].forEach((name, index) => rootCircuit.connect(comparator.id, name, probes[index].id, 'in'));
+    renderer.select(null); renderLibrary(); updateStats(); resetHistory();
+    setStatus('6-trit comparator loaded. Order is −1 / 0 / +1 for A < B / A = B / A > B; Less, Equal and Greater are 0/+1 control flags. Open it to follow the most-significant-first Compare / Select3 chain.');
+  }
+
+  function addSixTritSelectorCases(componentId, negInputs, zeroInputs, posInputs, selectInput, outputs) {
+    const vectors = [
+      { name: 'select negative word', neg: -364, zero: 0, pos: 364, select: -1 },
+      { name: 'select zero word', neg: -364, zero: 123, pos: 364, select: 0 },
+      { name: 'select positive word', neg: -364, zero: 0, pos: 364, select: 1 },
+      { name: 'negative channel mixed word', neg: -123, zero: 0, pos: 123, select: -1 },
+      { name: 'zero channel mixed word', neg: -123, zero: -1, pos: 123, select: 0 },
+      { name: 'positive channel mixed word', neg: -123, zero: 0, pos: 1, select: 1 },
+    ];
+    const cases = vectors.map((vector) => {
+      const neg = balancedWordDigits(vector.neg), zero = balancedWordDigits(vector.zero), pos = balancedWordDigits(vector.pos);
+      const selected = vector.select < 0 ? neg : vector.select > 0 ? pos : zero;
+      return {
+        id: `six-trit-select-${vector.select}-${vector.neg}-${vector.zero}-${vector.pos}`, name: vector.name,
+        inputs: {
+          ...Object.fromEntries(negInputs.map((input, index) => [input.id, neg[index]])),
+          ...Object.fromEntries(zeroInputs.map((input, index) => [input.id, zero[index]])),
+          ...Object.fromEntries(posInputs.map((input, index) => [input.id, pos[index]])),
+          [selectInput.id]: vector.select,
+        },
+        expectedOutputs: Object.fromEntries(outputs.map((output, index) => [output.id, selected[index]])),
+      };
+    });
+    testSuites = testSuites.filter((suite) => suite.componentId !== componentId);
+    testSuites.push({ componentId, cases });
+  }
+
+  function buildSixTritSelectorDemo() {
+    const label = uniqueName('6-trit Select3', [...customComponents.values()].map((meta) => meta.label), '6-trit Select3');
+    const id = `${slug(label)}-${Date.now().toString(36)}`;
+    const inner = new Circuit(registry);
+    const names = ['t5', 't4', 't3', 't2', 't1', 't0'];
+    const weights = [243, 81, 27, 9, 3, 1];
+    const makeInputs = (prefix, x, labelPrefix) => names.map((name, index) => inner.addComponent('component-input', x, -250 + index * 80, { name: `${prefix}${name.slice(1)}`, label: `${labelPrefix}${name.slice(1)} (${weights[index]})` }));
+    const negInputs = makeInputs('neg', -540, 'Neg ');
+    const zeroInputs = makeInputs('zero', -400, 'Zero ');
+    const posInputs = makeInputs('pos', -260, 'Pos ');
+    const selectInput = inner.addComponent('component-input', -540, 285, { name: 'select', label: 'Shared select' });
+    const selectors = names.map((name, index) => inner.addComponent('select3', 0, -250 + index * 80, { label: `Select ${name}` }));
+    const outputs = names.map((name, index) => inner.addComponent('component-output', 260, -250 + index * 80, { name: `out${name.slice(1)}`, label: `Out ${name.slice(1)}` }));
+    selectors.forEach((selector, index) => {
+      inner.connect(negInputs[index].id, 'out', selector.id, 'neg');
+      inner.connect(zeroInputs[index].id, 'out', selector.id, 'zero');
+      inner.connect(posInputs[index].id, 'out', selector.id, 'pos');
+      inner.connect(selectInput.id, 'out', selector.id, 'select');
+      inner.connect(selector.id, 'out', outputs[index].id, 'in');
+    });
+    const meta = {
+      id, type: `custom:${id}`, label, circuit: inner.serialize(),
+      experiment: {
+        role: 'six-trit routing building block', nodeCount: 6, depth: 1, primitiveCounts: { select3: 6 },
+        metrics: { nodes: 6, depth: 1, wires: inner.wires.size, transitions: 0, transitionScenario: 'static word selection; transition count intentionally not measured yet' },
+        rationale: 'One packed select trit is fanned out to six proven Select3 cells. Each cell chooses the matching lane from the negative, zero or positive word without decoding the control into binary-style lines. An unknown or floating select propagates as unknown on every output lane.',
+        validation: 'Saved vectors cover all three paths, mixed words and both word boundaries; the automated suite checks every one of 729 words through each selected path.',
+      },
+    };
+    customComponents.set(id, meta); registerCustom(meta); addSixTritSelectorCases(id, negInputs, zeroInputs, posInputs, selectInput, outputs);
+    const negValue = -364, zeroValue = 0, posValue = 364, selectValue = 0;
+    const negDigits = balancedWordDigits(negValue), zeroDigits = balancedWordDigits(zeroValue), posDigits = balancedWordDigits(posValue);
+    const controls = [
+      ...names.map((name, index) => rootCircuit.addComponent('trit-input', -560, -250 + index * 58, { value: negDigits[index], label: `Neg ${name.slice(1)}` })),
+      ...names.map((name, index) => rootCircuit.addComponent('trit-input', -430, -250 + index * 58, { value: zeroDigits[index], label: `Zero ${name.slice(1)}` })),
+      ...names.map((name, index) => rootCircuit.addComponent('trit-input', -300, -250 + index * 58, { value: posDigits[index], label: `Pos ${name.slice(1)}` })),
+      rootCircuit.addComponent('trit-input', -560, 130, { value: selectValue, label: 'Shared select' }),
+    ];
+    const selector = rootCircuit.addComponent(meta.type, 0, -270, { label });
+    const probes = names.map((name, index) => rootCircuit.addComponent('probe', 320, -250 + index * 58, { label: `Out ${name.slice(1)}` }));
+    negInputs.forEach((input, index) => rootCircuit.connect(controls[index].id, 'out', selector.id, input.state.name));
+    zeroInputs.forEach((input, index) => rootCircuit.connect(controls[index + 6].id, 'out', selector.id, input.state.name));
+    posInputs.forEach((input, index) => rootCircuit.connect(controls[index + 12].id, 'out', selector.id, input.state.name));
+    rootCircuit.connect(controls[18].id, 'out', selector.id, 'select');
+    outputs.forEach((output, index) => rootCircuit.connect(selector.id, output.state.name, probes[index].id, 'in'));
+    renderer.select(null); renderLibrary(); updateStats(); resetHistory();
+    setStatus('6-trit Select3 loaded. Set shared select to −1, 0 or +1 to choose the complete Neg, Zero or Pos word. Open it to inspect the six parallel Select3 cells.');
+  }
+
+  function addSixTritRouterCases(componentId, inputs, selectInput, negOutputs, zeroOutputs, posOutputs) {
+    const vectors = [
+      { name: 'route lower boundary negative', value: -364, select: -1 },
+      { name: 'route mixed word zero', value: -123, select: 0 },
+      { name: 'route upper boundary positive', value: 364, select: 1 },
+      { name: 'route zero negative', value: 0, select: -1 },
+      { name: 'route least-significant positive', value: 1, select: 1 },
+    ];
+    const cases = vectors.map((vector) => {
+      const word = balancedWordDigits(vector.value);
+      const inactive = balancedWordDigits(0);
+      const selected = vector.select < 0 ? negOutputs : vector.select > 0 ? posOutputs : zeroOutputs;
+      return {
+        id: `six-trit-route-${vector.value}-${vector.select}`, name: vector.name,
+        inputs: { ...Object.fromEntries(inputs.map((input, index) => [input.id, word[index]])), [selectInput.id]: vector.select },
+        expectedOutputs: {
+          ...Object.fromEntries(negOutputs.map((output, index) => [output.id, selected === negOutputs ? word[index] : inactive[index]])),
+          ...Object.fromEntries(zeroOutputs.map((output, index) => [output.id, selected === zeroOutputs ? word[index] : inactive[index]])),
+          ...Object.fromEntries(posOutputs.map((output, index) => [output.id, selected === posOutputs ? word[index] : inactive[index]])),
+        },
+      };
+    });
+    testSuites = testSuites.filter((suite) => suite.componentId !== componentId);
+    testSuites.push({ componentId, cases });
+  }
+
+  function buildSixTritRouterDemo() {
+    const label = uniqueName('6-trit Route3', [...customComponents.values()].map((meta) => meta.label), '6-trit Route3');
+    const id = `${slug(label)}-${Date.now().toString(36)}`;
+    const inner = new Circuit(registry);
+    const names = ['t5', 't4', 't3', 't2', 't1', 't0'];
+    const weights = [243, 81, 27, 9, 3, 1];
+    const inputs = names.map((name, index) => inner.addComponent('component-input', -420, -250 + index * 80, { name: `in${name.slice(1)}`, label: `In ${name.slice(1)} (${weights[index]})` }));
+    const selectInput = inner.addComponent('component-input', -420, 285, { name: 'select', label: 'Shared select' });
+    const routers = names.map((name, index) => inner.addComponent('route3', -100, -250 + index * 80, { label: `Route ${name}` }));
+    const makeOutputs = (prefix, x, labelPrefix) => names.map((name, index) => inner.addComponent('component-output', x, -250 + index * 80, { name: `${prefix}${name.slice(1)}`, label: `${labelPrefix}${name.slice(1)}` }));
+    const negOutputs = makeOutputs('neg', 180, 'Neg ');
+    const zeroOutputs = makeOutputs('zero', 340, 'Zero ');
+    const posOutputs = makeOutputs('pos', 500, 'Pos ');
+    routers.forEach((router, index) => {
+      inner.connect(inputs[index].id, 'out', router.id, 'in');
+      inner.connect(selectInput.id, 'out', router.id, 'select');
+      inner.connect(router.id, 'neg', negOutputs[index].id, 'in');
+      inner.connect(router.id, 'zero', zeroOutputs[index].id, 'in');
+      inner.connect(router.id, 'pos', posOutputs[index].id, 'in');
+    });
+    const meta = {
+      id, type: `custom:${id}`, label, circuit: inner.serialize(),
+      experiment: {
+        role: 'six-trit routing/read-path building block', nodeCount: 6, depth: 1, primitiveCounts: { route3: 6 },
+        metrics: { nodes: 6, depth: 1, wires: inner.wires.size, transitions: 0, transitionScenario: 'static word routing; transition count intentionally not measured yet' },
+        rationale: 'One packed select trit fans out to six proven Route3 cells. The selected word path carries all six input trits; both inactive paths are explicitly driven to six logical zeroes rather than floating or retaining a prior read. Unknown or floating select produces unknown output lanes on every path.',
+        validation: 'Saved vectors cover each read path, zero, mixed words and both word boundaries; the automated suite checks every one of 729 words through each path and confirms inactive paths are zero.',
+      },
+    };
+    customComponents.set(id, meta); registerCustom(meta); addSixTritRouterCases(id, inputs, selectInput, negOutputs, zeroOutputs, posOutputs);
+    const initialValue = -123, selectValue = 0;
+    const initialDigits = balancedWordDigits(initialValue);
+    const controls = [
+      ...names.map((name, index) => rootCircuit.addComponent('trit-input', -500, -250 + index * 58, { value: initialDigits[index], label: `In ${name.slice(1)}` })),
+      rootCircuit.addComponent('trit-input', -500, 130, { value: selectValue, label: 'Shared select' }),
+    ];
+    const router = rootCircuit.addComponent(meta.type, -100, -270, { label });
+    const probes = [
+      ...names.map((name, index) => rootCircuit.addComponent('probe', 240, -250 + index * 58, { label: `Neg ${name.slice(1)}` })),
+      ...names.map((name, index) => rootCircuit.addComponent('probe', 390, -250 + index * 58, { label: `Zero ${name.slice(1)}` })),
+      ...names.map((name, index) => rootCircuit.addComponent('probe', 540, -250 + index * 58, { label: `Pos ${name.slice(1)}` })),
+    ];
+    inputs.forEach((input, index) => rootCircuit.connect(controls[index].id, 'out', router.id, input.state.name));
+    rootCircuit.connect(controls[6].id, 'out', router.id, 'select');
+    [...negOutputs, ...zeroOutputs, ...posOutputs].forEach((output, index) => rootCircuit.connect(router.id, output.state.name, probes[index].id, 'in'));
+    renderer.select(null); renderLibrary(); updateStats(); resetHistory();
+    setStatus('6-trit Route3 loaded. Shared select routes the input word to Neg, Zero or Pos; the two inactive word paths are explicit zeroes. Open it to inspect the six parallel Route3 cells.');
+  }
+
+  function addSixTritAluCases(componentId, aInputs, bInputs, operationInput, resultOutputs, extensionOutput) {
+    const vectors = [
+      { name: 'subtract', a: 123, b: 45, operation: -1 },
+      { name: 'pass A ignores B', a: -123, b: 364, operation: 0 },
+      { name: 'add', a: 123, b: 45, operation: 1 },
+      { name: 'negative overflow', a: -364, b: 1, operation: -1 },
+      { name: 'positive overflow', a: 364, b: 1, operation: 1 },
+      { name: 'pass lower boundary', a: -364, b: 364, operation: 0 },
+      { name: 'pass upper boundary', a: 364, b: -364, operation: 0 },
+    ];
+    const cases = vectors.map((vector) => {
+      const raw = vector.operation < 0 ? vector.a - vector.b : vector.operation > 0 ? vector.a + vector.b : vector.a;
+      const extension = vector.operation === 0 ? 0 : raw < -364 ? -1 : raw > 364 ? 1 : 0;
+      const result = balancedWordDigits(raw - 729 * extension);
+      const a = balancedWordDigits(vector.a), b = balancedWordDigits(vector.b);
+      return {
+        id: `six-trit-alu-${vector.operation}-${vector.a}-${vector.b}`, name: vector.name,
+        inputs: { ...Object.fromEntries(aInputs.map((input, index) => [input.id, a[index]])), ...Object.fromEntries(bInputs.map((input, index) => [input.id, b[index]])), [operationInput.id]: vector.operation },
+        expectedOutputs: { ...Object.fromEntries(resultOutputs.map((output, index) => [output.id, result[index]])), [extensionOutput.id]: extension },
+      };
+    });
+    testSuites = testSuites.filter((suite) => suite.componentId !== componentId);
+    testSuites.push({ componentId, cases });
+  }
+
+  function createSixTritAluCandidate(label, strategy, selectedReference = false) {
+    const id = `${slug(label)}-${Date.now().toString(36)}-${strategy}`;
+    const inner = new Circuit(registry);
+    const names = ['t5', 't4', 't3', 't2', 't1', 't0'];
+    const weights = [243, 81, 27, 9, 3, 1];
+    const aInputs = names.map((name, index) => inner.addComponent('component-input', -600, -250 + index * 80, { name: `a${name.slice(1)}`, label: `A${name.slice(1)} (${weights[index]})` }));
+    const bInputs = names.map((name, index) => inner.addComponent('component-input', -470, -250 + index * 80, { name: `b${name.slice(1)}`, label: `B${name.slice(1)} (${weights[index]})` }));
+    const operationInput = inner.addComponent('component-input', -600, 285, { name: 'operation', label: 'Op: subtract / pass / add' });
+    const resultOutputs = names.map((name, index) => inner.addComponent('component-output', 460, -250 + index * 80, { name: `r${name.slice(1)}`, label: `Result ${name.slice(1)}` }));
+    const extensionOutput = inner.addComponent('component-output', 460, 285, { name: 'extension', label: 'Range extension' });
+    const zero = inner.addComponent('ternary-reference', -250, 310, { value: 0, label: 'Zero for pass A' });
+    const connectRipple = (adders, leftSources, rightSources, sums, extension) => {
+      names.forEach((name, index) => {
+        inner.connect(leftSources[index].id, leftSources[index].port || 'out', adders[index].id, 'a');
+        inner.connect(rightSources[index].id, rightSources[index].port || 'out', adders[index].id, 'b');
+        inner.connect(adders[index].id, 'sum', sums[index].id, sums[index].port || 'in');
+        if (index === names.length - 1) inner.connect(zero.id, 'out', adders[index].id, 'c');
+        else inner.connect(adders[index + 1].id, 'carry', adders[index].id, 'c');
+      });
+      inner.connect(adders[0].id, 'carry', extension.id, extension.port || 'in');
+    };
+    let experiment;
+    if (strategy === 'controlled-operand') {
+      const negates = names.map((name, index) => inner.addComponent('negate', -260, -250 + index * 80, { label: `Negate B${name.slice(1)}` }));
+      const operands = names.map((name, index) => inner.addComponent('select3', -40, -250 + index * 80, { label: `Choose B operand ${name.slice(1)}` }));
+      const adders = names.map((name, index) => inner.addComponent('normalize-carry', 190, -250 + index * 80, { label: `ALU ${name}` }));
+      names.forEach((name, index) => {
+        inner.connect(bInputs[index].id, 'out', negates[index].id, 'in');
+        inner.connect(negates[index].id, 'out', operands[index].id, 'neg');
+        inner.connect(zero.id, 'out', operands[index].id, 'zero');
+        inner.connect(bInputs[index].id, 'out', operands[index].id, 'pos');
+        inner.connect(operationInput.id, 'out', operands[index].id, 'select');
+      });
+      connectRipple(adders, aInputs, operands, resultOutputs, extensionOutput);
+      experiment = { role: selectedReference ? 'six-trit structural ALU reference' : 'six-trit ALU candidate', nodeCount: 19, depth: 8, primitiveCounts: { 'ternary-reference': 1, negate: 6, select3: 6, 'normalize-carry': 6 }, metrics: { nodes: 19, depth: 8, wires: inner.wires.size, transitions: 0, transitionScenario: 'static ALU result; transition count intentionally not measured yet' }, rationale: selectedReference ? 'The selected opening ALU: Op selects -B, 0 or +B before one shared ripple chain, so it computes A + Op×B. It naturally produces extension 0 for pass-A and uses only one arithmetic chain. Its Negate, Select3 and Normalize/carry components are accelerated equivalents with named structural references available from their Inspector panels.' : 'Candidate A: Op selects -B, 0 or +B before one shared ripple chain, so the ALU computes A + Op×B. It naturally produces extension 0 for pass-A and uses only one arithmetic chain.', validation: 'Saved vectors cover all operations and boundaries; exhaustive word-operation semantics are checked in the automated suite.' };
+    } else {
+      const negates = names.map((name, index) => inner.addComponent('negate', -260, -250 + index * 80, { label: `Negate B${name.slice(1)}` }));
+      const adds = names.map((name, index) => inner.addComponent('normalize-carry', -20, -250 + index * 80, { label: `Add ${name}` }));
+      const subtracts = names.map((name, index) => inner.addComponent('normalize-carry', 160, -250 + index * 80, { label: `Subtract ${name}` }));
+      const selectors = names.map((name, index) => inner.addComponent('select3', 310, -250 + index * 80, { label: `Choose result ${name.slice(1)}` }));
+      const extensionSelector = inner.addComponent('select3', 310, 285, { label: 'Choose extension' });
+      names.forEach((name, index) => inner.connect(bInputs[index].id, 'out', negates[index].id, 'in'));
+      names.forEach((name, index) => {
+        inner.connect(aInputs[index].id, 'out', adds[index].id, 'a'); inner.connect(bInputs[index].id, 'out', adds[index].id, 'b');
+        inner.connect(aInputs[index].id, 'out', subtracts[index].id, 'a'); inner.connect(negates[index].id, 'out', subtracts[index].id, 'b');
+        if (index === names.length - 1) { inner.connect(zero.id, 'out', adds[index].id, 'c'); inner.connect(zero.id, 'out', subtracts[index].id, 'c'); }
+        else { inner.connect(adds[index + 1].id, 'carry', adds[index].id, 'c'); inner.connect(subtracts[index + 1].id, 'carry', subtracts[index].id, 'c'); }
+        inner.connect(subtracts[index].id, 'sum', selectors[index].id, 'neg'); inner.connect(aInputs[index].id, 'out', selectors[index].id, 'zero'); inner.connect(adds[index].id, 'sum', selectors[index].id, 'pos'); inner.connect(operationInput.id, 'out', selectors[index].id, 'select'); inner.connect(selectors[index].id, 'out', resultOutputs[index].id, 'in');
+      });
+      inner.connect(subtracts[0].id, 'carry', extensionSelector.id, 'neg'); inner.connect(zero.id, 'out', extensionSelector.id, 'zero'); inner.connect(adds[0].id, 'carry', extensionSelector.id, 'pos'); inner.connect(operationInput.id, 'out', extensionSelector.id, 'select'); inner.connect(extensionSelector.id, 'out', extensionOutput.id, 'in');
+      experiment = { role: 'six-trit ALU candidate', nodeCount: 26, depth: 8, primitiveCounts: { 'ternary-reference': 1, negate: 6, 'normalize-carry': 12, select3: 7 }, metrics: { nodes: 26, depth: 8, wires: inner.wires.size, transitions: 0, transitionScenario: 'static ALU result; transition count intentionally not measured yet' }, rationale: 'Candidate B: calculate add and subtract independently, then select difference, A or sum. It keeps each arithmetic path isolated but duplicates the ripple chain and adds result selectors.', validation: 'Saved vectors cover all operations and boundaries; exhaustive word-operation semantics are checked in the automated suite.' };
+    }
+    const meta = { id, type: `custom:${id}`, label, circuit: inner.serialize(), experiment };
+    customComponents.set(id, meta); registerCustom(meta); addSixTritAluCases(id, aInputs, bInputs, operationInput, resultOutputs, extensionOutput);
+    return { meta, aInputs, bInputs, operationInput, resultOutputs, extensionOutput };
+  }
+
+  function buildSixTritAluComparisonDemo() {
+    const candidateA = createSixTritAluCandidate('6-trit ALU — controlled operand', 'controlled-operand');
+    const candidateB = createSixTritAluCandidate('6-trit ALU — parallel paths', 'parallel-paths');
+    const names = ['t5', 't4', 't3', 't2', 't1', 't0'];
+    const aDigits = balancedWordDigits(123), bDigits = balancedWordDigits(45);
+    const controls = [
+      ...names.map((name, index) => rootCircuit.addComponent('trit-input', -610, -250 + index * 58, { value: aDigits[index], label: `A${name.slice(1)}` })),
+      ...names.map((name, index) => rootCircuit.addComponent('trit-input', -470, -250 + index * 58, { value: bDigits[index], label: `B${name.slice(1)}` })),
+      rootCircuit.addComponent('trit-input', -610, 130, { value: 1, label: 'Op: subtract / pass / add' }),
+    ];
+    const instances = [rootCircuit.addComponent(candidateA.meta.type, -180, -270, { label: candidateA.meta.label }), rootCircuit.addComponent(candidateB.meta.type, 280, -270, { label: candidateB.meta.label })];
+    [candidateA, candidateB].forEach((candidate, candidateIndex) => {
+      candidate.aInputs.forEach((input, index) => rootCircuit.connect(controls[index].id, 'out', instances[candidateIndex].id, input.state.name));
+      candidate.bInputs.forEach((input, index) => rootCircuit.connect(controls[index + 6].id, 'out', instances[candidateIndex].id, input.state.name));
+      rootCircuit.connect(controls[12].id, 'out', instances[candidateIndex].id, candidate.operationInput.state.name);
+      candidate.resultOutputs.forEach((output, index) => { const probe = rootCircuit.addComponent('probe', candidateIndex ? 700 : 110, -250 + index * 58, { label: `${candidateIndex ? 'B' : 'A'} result ${index}` }); rootCircuit.connect(instances[candidateIndex].id, output.state.name, probe.id, 'in'); });
+      const extension = rootCircuit.addComponent('probe', candidateIndex ? 700 : 110, 130, { label: `${candidateIndex ? 'B' : 'A'} extension` }); rootCircuit.connect(instances[candidateIndex].id, candidate.extensionOutput.state.name, extension.id, 'in');
+    });
+    renderer.select(null); renderLibrary(); updateStats(); resetHistory();
+    setStatus('6-trit ALU comparison loaded. Candidate A controls B before one ripple (19 nodes); Candidate B computes add/sub in parallel then selects (26 nodes). Both share saved contract vectors. Candidate A is the preferred shape: same depth, fewer nodes and fewer wires.');
+  }
+
+  function buildSixTritAluDemo() {
+    const alu = createSixTritAluCandidate('6-trit ALU', 'controlled-operand', true);
+    const names = ['t5', 't4', 't3', 't2', 't1', 't0'];
+    const weights = [243, 81, 27, 9, 3, 1];
+    const aValue = 123, bValue = 45, operation = 1;
+    const aDigits = balancedWordDigits(aValue), bDigits = balancedWordDigits(bValue);
+    const controls = [
+      ...names.map((name, index) => rootCircuit.addComponent('trit-input', -520, -250 + index * 58, { value: aDigits[index], label: `A${name.slice(1)} · ${weights[index]}s` })),
+      ...names.map((name, index) => rootCircuit.addComponent('trit-input', -370, -250 + index * 58, { value: bDigits[index], label: `B${name.slice(1)} · ${weights[index]}s` })),
+      rootCircuit.addComponent('trit-input', -520, 130, { value: operation, label: 'Op: subtract / pass / add' }),
+    ];
+    const instance = rootCircuit.addComponent(alu.meta.type, -20, -270, { label: alu.meta.label });
+    const probes = [
+      ...names.map((name, index) => rootCircuit.addComponent('probe', 300, -250 + index * 58, { label: `Result ${name.slice(1)}` })),
+      rootCircuit.addComponent('probe', 300, 130, { label: 'Range extension' }),
+    ];
+    alu.aInputs.forEach((input, index) => rootCircuit.connect(controls[index].id, 'out', instance.id, input.state.name));
+    alu.bInputs.forEach((input, index) => rootCircuit.connect(controls[index + 6].id, 'out', instance.id, input.state.name));
+    rootCircuit.connect(controls[12].id, 'out', instance.id, alu.operationInput.state.name);
+    alu.resultOutputs.forEach((output, index) => rootCircuit.connect(instance.id, output.state.name, probes[index].id, 'in'));
+    rootCircuit.connect(instance.id, alu.extensionOutput.state.name, probes[6].id, 'in');
+    renderer.select(null); renderLibrary(); updateStats(); resetHistory();
+    setStatus('6-trit ALU loaded. Op −1 computes A − B, 0 passes A, and +1 computes A + B. Open it to inspect controlled B feeding one Normalize/carry ripple; open those accelerated blocks again to reach their named structural references.');
   }
 
   function buildSevenSegmentDemo() {

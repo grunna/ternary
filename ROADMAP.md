@@ -252,18 +252,34 @@ This phase ends with tested, reusable word-level operations. It deliberately doe
 - [x] Validate all 729 six-trit words at the word boundary
 - [x] Native ternary adder — opening 6-trit Normalize / carry ripple chain
 - [x] Negation/subtraction strategy — reusable 6-trit negator feeding 6-trit ripple subtraction
-- [ ] Define and test word carry/borrow and out-of-range-result policy
-- [ ] Build a 6-trit comparator from proven lower-level comparison blocks
-- [ ] Define word equality, less-than and greater-than outputs for CPU/control use
+- [x] Define and test word carry/borrow and out-of-range-result policy
+- [x] Build a 6-trit comparator from proven lower-level comparison blocks
+- [x] Define word equality, less-than and greater-than outputs for CPU/control use
 
 ### Phase 16B.2 — Word routing and ALU experiments
 
-- [ ] Build a 6-trit `Select3` word selector with one shared select trit
-- [ ] Build a 6-trit router/read-path network with explicit inactive-path behavior
-- [ ] Define a compact ternary ALU-operation control contract
-- [ ] Compare candidate ALU operations and structures before fixing the first ALU shape
-- [ ] Build an opening structural 6-trit ALU only after its operations, control and equivalence paths are justified
-- [ ] Validate every chosen word operation with saved vectors, boundary values and unknown/floating behavior
+- [x] Build a 6-trit `Select3` word selector with one shared select trit
+- [x] Build a 6-trit router/read-path network with explicit inactive-path behavior
+- [x] Define a compact ternary ALU-operation control contract
+- [x] Compare candidate ALU operations and structures before fixing the first ALU shape
+- [x] Build an opening structural 6-trit ALU only after its operations, control and equivalence paths are justified
+- [x] Validate every chosen word operation with saved vectors, boundary values and unknown/floating behavior
+
+## Phase 16C — I/O peripherals and visual output
+
+I/O components are explicit external adapters: they consume or produce public ternary signals but do not become hidden logical primitives. `Z` and `?` must remain visible at every peripheral boundary.
+
+- [x] Define the shared I/O-adapter contract: driven inputs, sampled outputs, update timing, reset and `Z` / `?` presentation
+- [ ] Build an interactive one-trit input peripheral with a declared external-control boundary
+- [ ] Build a reusable interactive 6-trit word input from six aligned trit inputs
+- [ ] Build a native 6-trit word output with one visible `− / 0 / +` glyph per lane and explicit unknown/floating presentation
+- [ ] Package LED/probe-style trit and word outputs as reusable external adapters
+- [ ] Define the opening pixel-display port contract: balanced `x`, `y`, colour/data, write, clock and reset
+- [ ] Build a small `Pixel Display 3×3` peripheral with ternary coordinates and explicit pixel-state update semantics
+- [ ] Test every pixel address, colour, write/reset sequence and invalid/unknown/floating input behavior
+- [ ] Let the pixel display expose its current frame and drill into its public I/O contract from Inspector
+- [ ] Build larger displays only by documented composition or a named accelerated reference
+- [ ] Define a future memory-mapped display adapter using the same public memory/I/O conventions as the CPU
 
 ## Phase 17 — Structural ternary memory
 
