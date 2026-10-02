@@ -9,6 +9,17 @@
   const isFloating = (value) => value === FLOATING;
   const isKnownTrit = (value) => !isUnknown(value) && !isFloating(value);
   const trit = (value) => isUnknown(value) ? UNKNOWN : isFloating(value) ? FLOATING : Number(value) < 0 ? -1 : Number(value) > 0 ? 1 : 0;
+  const balancedWordDigits = (value, width = 6) => {
+    const digits = [];
+    let remaining = Math.round(Number(value));
+    for (let index = 0; index < width; index += 1) {
+      const remainder = ((remaining % 3) + 3) % 3;
+      const digit = remainder === 2 ? -1 : remainder;
+      digits.unshift(digit);
+      remaining = (remaining - digit) / 3;
+    }
+    return remaining === 0 ? digits : null;
+  };
 
   // A declared state boundary retains a value between evaluations. Its output can
   // therefore feed a later combinational path back to its input without making the
@@ -613,7 +624,21 @@
 
   const registry = new ComponentRegistry();
 
-  registry.register({ type: 'trit-input', label: 'Trit input', inputs: [], outputs: ['out'], defaultState: { value: 0 }, evaluate: (c) => ({ out: trit(c.state.value) }) });
+  registry.register({ type: 'trit-input', label: 'Interactive trit input', inputs: [], outputs: ['out'], defaultState: { value: 0 }, evaluate: (c) => ({ out: trit(c.state.value) }) });
+  registry.register({ type: 'word-input6', label: 'Interactive 6-trit word input', inputs: [], outputs: ['t5', 't4', 't3', 't2', 't1', 't0'], defaultState: { values: [0, 0, 0, 0, 0, 0] }, evaluate: (c) => Object.fromEntries(['t5', 't4', 't3', 't2', 't1', 't0'].map((name, index) => [name, trit(c.state.values?.[index])])) });
+  registry.register({ type: 'input-button3', label: 'Interactive input button', inputs: [], outputs: ['out'], defaultState: { releasedValue: 0, pressedValue: 1, mode: 'momentary', pulseMs: 120, pressed: false }, evaluate: (c) => ({ out: trit(c.state.pressed ? c.state.pressedValue : c.state.releasedValue) }) });
+  registry.register({ type: 'input-joystick3', label: 'Interactive ternary joystick', inputs: [], outputs: ['x', 'y'], defaultState: { x: 0, y: 0 }, evaluate: (c) => ({ x: trit(c.state.x), y: trit(c.state.y) }) });
+  registry.register({ type: 'input-joystick6', label: 'Interactive analog 6-trit joystick', inputs: [], outputs: ['x5', 'x4', 'x3', 'x2', 'x1', 'x0', 'y5', 'y4', 'y3', 'y2', 'y1', 'y0'], defaultState: { x: 0, y: 0 }, evaluate: (c) => {
+    const axis = (value) => {
+      if (isFloating(value)) return Array(6).fill(FLOATING);
+      if (isUnknown(value)) return Array(6).fill(UNKNOWN);
+      const number = Number(value);
+      if (!Number.isFinite(number)) return Array(6).fill(UNKNOWN);
+      return balancedWordDigits(Math.max(-364, Math.min(364, Math.round(number))), 6);
+    };
+    const x = axis(c.state.x), y = axis(c.state.y);
+    return Object.fromEntries([...x.map((value, index) => [`x${5 - index}`, value]), ...y.map((value, index) => [`y${5 - index}`, value])]);
+  } });
   registry.register({ type: 'clock', label: 'Clock', inputs: [], outputs: ['out'], defaultState: { value: 0 }, evaluate: (c) => ({ out: trit(c.state.value) }) });
   registry.register({
     type: 'sequence-generator',
@@ -714,6 +739,8 @@
     },
   });
   registry.register({ type: 'seven-segment-display', label: '7-segment display', category: 'output', inputs: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'sign'], outputs: [], cost: { logical: { nodes: 0, depth: 0 } }, evaluate() { return {}; } });
+  registry.register({ type: 'word-display6', label: '6-trit word display', category: 'output', inputs: ['t5', 't4', 't3', 't2', 't1', 't0'], outputs: [], defaultState: { values: [UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN] }, cost: { logical: { nodes: 0, depth: 0 } }, evaluate(c) { c.state.values = ['t5', 't4', 't3', 't2', 't1', 't0'].map((name) => trit(c.inputs[name])); return {}; } });
+  registry.register({ type: 'decimal-debug6', label: '6-trit decimal debug view', category: 'debug', inputs: ['t5', 't4', 't3', 't2', 't1', 't0'], outputs: [], defaultState: { values: [UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN], decimal: null }, cost: { logical: { nodes: 0, depth: 0 } }, evaluate(c) { const values = ['t5', 't4', 't3', 't2', 't1', 't0'].map((name) => trit(c.inputs[name])); c.state.values = values; c.state.decimal = values.every(isKnownTrit) ? values.reduce((total, value) => total * 3 + value, 0) : null; return {}; } });
   registry.register({ type: 'probe', label: 'Probe', inputs: ['in'], outputs: [], defaultState: { value: UNKNOWN }, evaluate(c) { c.state.value = trit(c.inputs.in); return {}; } });
   registry.register({ type: 'component-input', label: 'Component Input', inputs: [], outputs: ['out'], defaultState: { name: 'in', value: 0 }, boundary: 'input', evaluate: (c) => ({ out: trit(c.state.value) }) });
   registry.register({ type: 'component-seven-segment-display', label: '7-segment Output', inputs: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'sign'], outputs: [], boundary: 'display', evaluate() { return {}; } });
@@ -723,7 +750,11 @@
   // structural path. This is displayed in the Inspector; it prevents native
   // evaluation from silently becoming a magic architectural primitive.
   const implementationMetadata = {
-    'trit-input': { mode: 'external-adapter', status: 'boundary', summary: 'A user or external device drives one resolved ternary level onto the circuit.', layers: ['External/user source → driven ternary wire'] },
+    'trit-input': { mode: 'external-adapter', status: 'test/debug source boundary', summary: 'A general test source drives one declared ternary level, Z (floating), or ? (unknown) onto the circuit; it is not presented as an end-user control.', layers: ['Test/source state', 'Driven ternary wire'] },
+    'word-input6': { mode: 'external-adapter', status: 'test/debug source boundary', summary: 'A general test source independently drives six ordered word lanes t5…t0. Each lane may be a known trit, Z (floating), or ? (unknown).', layers: ['Six test/source states', 'Six driven ternary word wires'] },
+    'input-button3': { mode: 'external-adapter', status: 'user I/O button boundary', summary: 'A clickable two-state end-user control drives configured released and pressed ternary levels. It supports momentary, toggle, or declared-duration pulse behavior.', layers: ['User button action', 'Declared two-level ternary output'] },
+    'input-joystick3': { mode: 'external-adapter', status: 'user I/O joystick boundary', summary: 'A clickable end-user controller drives independent ternary x and y axes. The 3×3 pad expresses center, cardinals and diagonals.', layers: ['User directional action', 'Two driven ternary axis wires'] },
+    'input-joystick6': { mode: 'external-adapter', status: 'user I/O analog joystick boundary', summary: 'A drag-based end-user controller quantizes independent x and y positions to six balanced trits each (-364…+364).', layers: ['User analog position', 'Two six-trit driven word wires'] },
     clock: { mode: 'external-adapter', status: 'boundary', summary: 'A timing source is outside the combinational ternary datapath.', layers: ['External timing source → clock wire'] },
     'sequence-generator': { mode: 'external-adapter', status: 'boundary', summary: 'A simulator/UI source emits a declared sequence; it is not internal logic.', layers: ['External timing/control source → ternary wire'] },
     'ternary-reference': { mode: 'structural', status: 'cell boundary', summary: 'Declared fixed ternary reference rail used when a structural circuit needs a known -1, 0 or +1 level.', layers: ['Ideal ternary reference rail'] },
@@ -745,10 +776,12 @@
     latch3: { mode: 'accelerated-equivalent', status: 'structural reference available', summary: 'Native execution accelerates the named structural latch.', layers: ['Ternary restorer', 'Ternary pass switch', 'Ternary storage node'], structuralImplementation: 'structural-latch-v1' },
     register3: { mode: 'accelerated-equivalent', status: 'structural reference available', summary: 'Native execution accelerates the named two-latch register.', layers: ['Clock phase inverter', 'load control', 'two structural latches'], structuralImplementation: 'structural-register-v1' },
     'register-bank3': { mode: 'accelerated-equivalent', status: 'structural reference available', summary: 'Native bank execution accelerates the named structural 3×1 bank.', layers: ['Ternary address decoder', 'three structural registers', 'write pass paths', 'Select3 read path'], structuralImplementation: 'structural-register-bank3-v1' },
-    'seven-segment-display': { mode: 'external-adapter', status: 'boundary', summary: 'A peripheral consumes eight two-state segment-control lines. It is outside the ternary logic hierarchy, not a ternary shortcut.', layers: ['Ternary decoder component', '0 / +1 segment-control boundary', 'Physical/display adapter'] },
-    probe: { mode: 'external-adapter', status: 'boundary', summary: 'Reads a wire without contributing logical behavior.', layers: ['Observation/debug boundary'] },
-    'component-input': { mode: 'external-adapter', status: 'boundary', summary: 'Named external input to an inspectable reusable circuit.', layers: ['Reusable-component input boundary'] },
-    'component-output': { mode: 'external-adapter', status: 'boundary', summary: 'Named external output from an inspectable reusable circuit.', layers: ['Reusable-component output boundary'] },
+    'seven-segment-display': { mode: 'external-adapter', status: 'user I/O display boundary', summary: 'An end-user peripheral consumes eight two-state segment-control lines. It is outside the ternary logic hierarchy, not a ternary shortcut.', layers: ['Ternary decoder component', '0 / +1 segment-control boundary', 'Physical/display adapter'] },
+    'word-display6': { mode: 'external-adapter', status: 'user I/O word display boundary', summary: 'An end-user peripheral observes and renders six ordered ternary word lanes. It shows known, floating and unknown values without contributing logic.', layers: ['Six ternary word wires', 'Visible − / 0 / + / Z / ? display adapter'] },
+    'decimal-debug6': { mode: 'external-adapter', status: 'debug decimal observer boundary', summary: 'A non-structural debug observer converts a settled known six-trit word to decimal for inspection only. It has no circuit output and is not a user-facing hardware peripheral.', layers: ['Six ternary word wires', 'Debug-only decimal readout'] },
+    probe: { mode: 'external-adapter', status: 'debug observer boundary', summary: 'Reads a wire without contributing logical behavior or acting as an end-user display.', layers: ['Observation/debug boundary'] },
+    'component-input': { mode: 'external-adapter', status: 'module interface boundary', summary: 'Named internal module input to an inspectable reusable circuit; it is not itself an end-user peripheral.', layers: ['Reusable-component input boundary'] },
+    'component-output': { mode: 'external-adapter', status: 'module interface boundary', summary: 'Named internal module output from an inspectable reusable circuit; it is not itself an end-user peripheral.', layers: ['Reusable-component output boundary'] },
     'component-seven-segment-display': { mode: 'external-adapter', status: 'boundary', summary: 'Reusable-component boundary for a visible seven-segment peripheral.', layers: ['Ternary decoder component', '0 / +1 segment-control boundary', 'Physical/display adapter'] },
   };
   for (const [type, implementation] of Object.entries(implementationMetadata)) registry.get(type).implementation = implementation;

@@ -54,6 +54,11 @@
     graphics.roundRect(left - 42, 109, 25, 7, 3).fill(displaySegmentColor(inputs.sign));
   }
 
+  function wordGlyph(value) {
+    value = trit(value);
+    return value === null ? '?' : value === 'Z' ? 'Z' : value < 0 ? '−' : value > 0 ? '+' : '0';
+  }
+
   class CircuitRenderer {
     constructor({ element, circuit, registry, onSelectionChanged, onStatus, onBeforeChange, onAfterChange, onOpenComponent }) {
       this.element = element;
@@ -370,13 +375,15 @@
       const definition = this.registry.get(component.type);
       const layout = component.state.layout || {};
       const isSevenSegment = component.type === 'seven-segment-display' || component.type === 'component-seven-segment-display' || definition.visual?.kind === 'seven-segment';
-      const defaultWidth = isSevenSegment ? 240 : component.type === 'select3' ? 170 : 150;
+      const isWordDisplay = component.type === 'word-display6';
+      const isDecimalDebug = component.type === 'decimal-debug6';
+      const defaultWidth = isSevenSegment ? 240 : isWordDisplay ? 260 : isDecimalDebug ? 250 : component.type === 'select3' ? 170 : 150;
       const width = Math.max(120, Math.min(320, Number(layout.width) || defaultWidth));
       const portSpacing = Math.max(18, Math.min(60, Number(layout.portSpacing) || 24));
       const inputSide = layout.inputSide === 'right' ? 'right' : 'left';
       const outputSide = layout.outputSide === 'left' ? 'left' : 'right';
       const rows = Math.max(definition.inputs.length, definition.outputs.length, 1);
-      const height = Math.max(isSevenSegment ? 240 : 78, 48 + rows * portSpacing);
+      const height = Math.max(isSevenSegment ? 240 : isWordDisplay || isDecimalDebug ? 200 : 78, 48 + rows * portSpacing);
       const container = new PIXI.Container();
       container.position.set(component.x, component.y);
       container.eventMode = 'static';
@@ -404,6 +411,31 @@
         segmentDisplay = new PIXI.Graphics();
         segmentDisplay.eventMode = 'none';
         container.addChild(segmentDisplay);
+      }
+      let wordDisplay = null;
+      if (isWordDisplay) {
+        wordDisplay = new PIXI.Container();
+        wordDisplay.position.set(width - 130, 43);
+        const bezel = new PIXI.Graphics();
+        wordDisplay.addChild(bezel); wordDisplay._bezel = bezel; wordDisplay.glyphs = [];
+        for (let index = 0; index < 6; index += 1) {
+          const glyph = new PIXI.Text({ text: '0', style: { fill: COLORS.zero, fontSize: 18, fontWeight: '700', fontFamily: 'monospace' } });
+          glyph.anchor.set(0.5); glyph.position.set(12 + index * 19, 23); wordDisplay.glyphs.push(glyph); wordDisplay.addChild(glyph);
+        }
+        container.addChild(wordDisplay);
+      }
+      let decimalReadout = null;
+      if (isDecimalDebug) {
+        decimalReadout = new PIXI.Container();
+        decimalReadout.position.set(width - 118, 43);
+        const bezel = new PIXI.Graphics();
+        const label = new PIXI.Text({ text: 'DECIMAL', style: { fill: COLORS.muted, fontSize: 9, fontWeight: '700', letterSpacing: 1 } });
+        label.position.set(10, 7);
+        const value = new PIXI.Text({ text: '?', style: { fill: COLORS.unknown, fontSize: 25, fontWeight: '700', fontFamily: 'monospace' } });
+        value.anchor.set(0.5, 0); value.position.set(54, 20);
+        decimalReadout.addChild(bezel, label, value);
+        decimalReadout._bezel = bezel; decimalReadout._value = value;
+        container.addChild(decimalReadout);
       }
 
       const ports = new Map();
@@ -471,33 +503,102 @@
       definition.outputs.forEach((name, i) => makePort('output', name, i, definition.outputs.length));
 
       let valueButton = null;
-      if (component.type === 'trit-input' || component.type === 'component-input') {
+      if (component.type === 'trit-input' || component.type === 'component-input' || component.type === 'input-button3') {
         valueButton = new PIXI.Container();
-        valueButton.position.set(width - 43, 14);
+        const isInputButton = component.type === 'input-button3';
+        valueButton.position.set(width - (isInputButton ? 78 : 43), 14);
         valueButton.eventMode = 'static';
         valueButton.cursor = 'pointer';
-        valueButton.hitArea = new PIXI.Rectangle(0, 0, 30, 28);
+        valueButton.hitArea = new PIXI.Rectangle(0, 0, isInputButton ? 65 : 30, 28);
         const bg = new PIXI.Graphics();
-        const text = new PIXI.Text({ text: '0', style: { fill: COLORS.text, fontSize: 16, fontWeight: '700' } });
+        const text = new PIXI.Text({ text: isInputButton ? 'PRESS' : '0', style: { fill: COLORS.text, fontSize: isInputButton ? 11 : 16, fontWeight: '700' } });
         text.anchor.set(0.5);
-        text.position.set(15, 14);
+        text.position.set(isInputButton ? 32.5 : 15, 14);
         valueButton.addChild(bg, text);
         valueButton.on('pointerdown', (e) => {
           e.stopPropagation();
           this.app.canvas.focus();
-          this.onBeforeChange(component.type === 'component-input' ? 'Change component test input' : 'Change trit');
+          const mode = component.state.mode || 'momentary';
+          const changeName = component.type === 'input-button3' ? 'Press input button' : component.type === 'component-input' ? 'Change component test input' : 'Change trit';
+          this.onBeforeChange(changeName);
           if (component.type === 'component-input') {
             const current = trit(component.state.value);
             const next = current < 0 ? 0 : current === 0 ? 1 : -1;
             this.circuit.setState(component.id, { value: next });
+          } else if (component.type === 'input-button3') {
+            if (mode === 'toggle') this.circuit.setState(component.id, { pressed: !component.state.pressed });
+            else if (mode === 'pulse') {
+              this.circuit.setState(component.id, { pressed: true });
+              const duration = Math.max(20, Math.min(5000, Number(component.state.pulseMs) || 120));
+              window.setTimeout(() => {
+                const live = this.circuit.components.get(component.id);
+                if (live?.type === 'input-button3' && live.state.mode === 'pulse' && live.state.pressed) this.circuit.setState(component.id, { pressed: false });
+              }, duration);
+            } else this.circuit.setState(component.id, { pressed: true });
           } else {
             this.circuit.cycleTritInput(component.id);
           }
-          this.onAfterChange(component.type === 'component-input' ? 'Change component test input' : 'Change trit');
+          this.onAfterChange(changeName);
         });
+        if (component.type === 'input-button3') {
+          const release = (e) => {
+            e.stopPropagation();
+            if ((component.state.mode || 'momentary') !== 'momentary' || !component.state.pressed) return;
+            this.onBeforeChange('Release input button'); this.circuit.setState(component.id, { pressed: false }); this.onAfterChange('Release input button');
+          };
+          valueButton.on('pointerup', release); valueButton.on('pointerupoutside', release);
+        }
         container.addChild(valueButton);
         valueButton._bg = bg;
         valueButton._text = text;
+      }
+
+      let joystickPad = null;
+      if (component.type === 'input-joystick3') {
+        joystickPad = new PIXI.Container();
+        joystickPad.position.set(width - 78, 39);
+        const cellSize = 21;
+        joystickPad.cells = [];
+        for (let row = 0; row < 3; row += 1) {
+          for (let column = 0; column < 3; column += 1) {
+            const x = column - 1, y = 1 - row;
+            const cell = new PIXI.Container();
+            cell.position.set(column * cellSize, row * cellSize);
+            cell.eventMode = 'static'; cell.cursor = 'pointer'; cell.hitArea = new PIXI.Rectangle(0, 0, cellSize - 2, cellSize - 2);
+            const bg = new PIXI.Graphics();
+            const marker = new PIXI.Text({ text: x === 0 && y === 0 ? '●' : '•', style: { fill: COLORS.muted, fontSize: x === 0 && y === 0 ? 10 : 8 } });
+            marker.anchor.set(0.5); marker.position.set((cellSize - 2) / 2, (cellSize - 2) / 2);
+            cell.addChild(bg, marker);
+            cell.on('pointerdown', (e) => {
+              e.stopPropagation(); this.app.canvas.focus();
+              this.onBeforeChange('Set joystick position'); this.circuit.setState(component.id, { x, y }); this.onAfterChange('Set joystick position');
+            });
+            cell._bg = bg; cell._x = x; cell._y = y;
+            joystickPad.cells.push(cell); joystickPad.addChild(cell);
+          }
+        }
+        container.addChild(joystickPad);
+      }
+
+      let analogJoystickPad = null;
+      if (component.type === 'input-joystick6') {
+        analogJoystickPad = new PIXI.Container();
+        analogJoystickPad.position.set(width - 84, 40);
+        analogJoystickPad.eventMode = 'static'; analogJoystickPad.cursor = 'crosshair'; analogJoystickPad.hitArea = new PIXI.Rectangle(0, 0, 72, 72);
+        const base = new PIXI.Graphics(); const knob = new PIXI.Graphics();
+        analogJoystickPad.addChild(base, knob); analogJoystickPad._base = base; analogJoystickPad._knob = knob; analogJoystickPad.dragging = false;
+        const setPosition = (event) => {
+          const local = analogJoystickPad.toLocal(event.global);
+          const clamp = (value) => Math.max(-1, Math.min(1, value));
+          let x = clamp((local.x - 36) / 36), y = clamp((36 - local.y) / 36);
+          if (Math.hypot(x, y) < .12) { x = 0; y = 0; }
+          this.circuit.setState(component.id, { x: Math.round(x * 364), y: Math.round(y * 364) });
+        };
+        analogJoystickPad.on('pointerdown', (event) => { event.stopPropagation(); this.app.canvas.focus(); analogJoystickPad.dragging = true; this.onBeforeChange('Move analog joystick'); setPosition(event); });
+        analogJoystickPad.on('pointermove', (event) => { if (analogJoystickPad.dragging) { event.stopPropagation(); setPosition(event); } });
+        const stop = (event) => { if (event) event.stopPropagation(); if (!analogJoystickPad.dragging) return; analogJoystickPad.dragging = false; this.onAfterChange('Move analog joystick'); };
+        analogJoystickPad.on('pointerup', stop); analogJoystickPad.on('pointerupoutside', stop);
+        container.addChild(analogJoystickPad);
       }
 
       container.on('pointerdown', (e) => {
@@ -534,7 +635,7 @@
       container.on('pointerupoutside', () => { container.cursor = 'grab'; });
 
       this.nodeLayer.addChild(container);
-      this.nodeViews.set(component.id, { container, body, title, valueText, valueButton, segmentDisplay, ports, width, height });
+      this.nodeViews.set(component.id, { container, body, title, valueText, valueButton, joystickPad, analogJoystickPad, segmentDisplay, wordDisplay, decimalReadout, ports, width, height });
       this.drawNode(component.id);
       this.refreshComponentView(component.id);
     }
@@ -567,6 +668,60 @@
         view.valueText.text = 'source';
         view.valueButton._text.text = signalText(value);
         view.valueButton._bg.clear().roundRect(0, 0, 30, 28, 7).fill(signalColor(value));
+      } else if (component.type === 'input-button3') {
+        const value = trit(component.outputs.out);
+        const active = Boolean(component.state.pressed);
+        view.valueText.text = `${component.state.mode || 'momentary'} · ${signalText(component.state.releasedValue)} → ${signalText(component.state.pressedValue)}`;
+        view.valueText.style.fill = signalColor(value);
+        view.valueButton._text.text = active ? 'PRESSED' : 'PRESS';
+        view.valueButton._bg.clear().roundRect(0, 0, 65, 28, 7).fill(active ? signalColor(value) : 0x26313d).stroke({ color: active ? signalColor(value) : COLORS.nodeBorder, width: 1 });
+      } else if (component.type === 'input-joystick3') {
+        const x = trit(component.state.x), y = trit(component.state.y);
+        view.valueText.text = `x = ${signalText(x)} · y = ${signalText(y)}`;
+        view.valueText.style.fill = x === null || y === null ? COLORS.unknown : x === 'Z' || y === 'Z' ? COLORS.floating : COLORS.muted;
+        for (const cell of view.joystickPad?.cells || []) {
+          const selected = cell._x === x && cell._y === y;
+          cell._bg.clear().roundRect(0, 0, 19, 19, 4).fill(selected ? COLORS.nodeSelected : 0x18212b).stroke({ color: selected ? 0xaed7ff : COLORS.nodeBorder, width: selected ? 1.5 : 1 });
+        }
+      } else if (component.type === 'input-joystick6') {
+        const rawX = component.state.x, rawY = component.state.y;
+        const x = Math.max(-364, Math.min(364, Math.round(Number(rawX) || 0)));
+        const y = Math.max(-364, Math.min(364, Math.round(Number(rawY) || 0)));
+        const axisText = (value) => value === 'Z' ? 'Z' : value === null || value === undefined || !Number.isFinite(Number(value)) ? '?' : String(Math.round(Number(value)));
+        view.valueText.text = `x = ${axisText(rawX)} · y = ${axisText(rawY)}`;
+        view.valueText.style.fill = rawX === null || rawY === null ? COLORS.unknown : rawX === 'Z' || rawY === 'Z' ? COLORS.floating : COLORS.muted;
+        const base = view.analogJoystickPad?._base, knob = view.analogJoystickPad?._knob;
+        if (base && knob) {
+          base.clear().roundRect(0, 0, 72, 72, 9).fill(0x10171f).stroke({ color: COLORS.nodeBorder, width: 1 });
+          base.moveTo(36, 6).lineTo(36, 66).stroke({ color: 0x354453, width: 1 }); base.moveTo(6, 36).lineTo(66, 36).stroke({ color: 0x354453, width: 1 }); base.circle(36, 36, 4.3).stroke({ color: 0x536678, width: 1 });
+          knob.clear().circle(36 + x / 364 * 30, 36 - y / 364 * 30, 6).fill(COLORS.nodeSelected).stroke({ color: 0xd9ecff, width: 1.2 });
+        }
+      } else if (component.type === 'word-display6') {
+        const values = ['t5', 't4', 't3', 't2', 't1', 't0'].map((name) => trit(component.inputs[name]));
+        const invalid = values.some((value) => value === null || value === 'Z');
+        view.valueText.text = invalid ? 'word input contains Z or ?' : 'balanced ternary word';
+        view.valueText.style.fill = invalid ? COLORS.floating : COLORS.muted;
+        const bezel = view.wordDisplay?._bezel;
+        if (bezel) bezel.clear().roundRect(0, 0, 120, 46, 8).fill(0x0a0d12).stroke({ color: 0x485568, width: 1 });
+        values.forEach((value, index) => {
+          const glyph = view.wordDisplay?.glyphs[index];
+          if (!glyph) return;
+          glyph.text = wordGlyph(value); glyph.style.fill = signalColor(value);
+        });
+      } else if (component.type === 'decimal-debug6') {
+        const values = ['t5', 't4', 't3', 't2', 't1', 't0'].map((name) => trit(component.inputs[name]));
+        const hasUnknown = values.some((value) => value === null);
+        const hasFloating = values.some((value) => value === 'Z');
+        const decimal = component.state.decimal;
+        view.valueText.text = hasUnknown || hasFloating ? 'requires six settled trits' : 't5 … t0 → decimal · debug only';
+        view.valueText.style.fill = hasUnknown ? COLORS.unknown : hasFloating ? COLORS.floating : COLORS.muted;
+        const bezel = view.decimalReadout?._bezel;
+        const value = view.decimalReadout?._value;
+        if (bezel) bezel.clear().roundRect(0, 0, 108, 56, 8).fill(0x0a0d12).stroke({ color: 0x485568, width: 1 });
+        if (value) {
+          value.text = hasUnknown ? '?' : hasFloating ? 'Z' : decimal > 0 ? `+${decimal}` : String(decimal);
+          value.style.fill = hasUnknown ? COLORS.unknown : hasFloating ? COLORS.floating : signalColor(decimal);
+        }
       } else if (component.type === 'probe') {
         const value = trit(component.state.value);
         view.valueText.text = `value = ${signalText(value)}`;

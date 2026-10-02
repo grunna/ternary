@@ -18,7 +18,7 @@
 
   const simulation = { mode: 'run', previousMode: 'run', timer: null, generatorTimer: null, generatorLastTick: performance.now(), activeUnsubscribers: [] };
 
-  const UTILITY_PRIMITIVES = ['trit-input', 'ternary-reference', 'sequence-generator', 'latch3', 'register3', 'register-bank3', 'seven-segment-display', 'probe'];
+  const UTILITY_PRIMITIVES = ['trit-input', 'word-input6', 'input-button3', 'input-joystick3', 'input-joystick6', 'ternary-reference', 'sequence-generator', 'latch3', 'register3', 'register-bank3', 'seven-segment-display', 'word-display6', 'decimal-debug6', 'probe'];
   const EXPERIMENTAL_PRIMITIVES = ['negate', 'compare', 'select3', 'route3', 'adjust3', 'control3', 'threshold3', 'restore3', 'pass3', 'merge3', 'ternary-reference', 'storage-node3', 'clock-phase3', 'min', 'max', 'normalize-carry'];
   const PRIMITIVE_SETS = {
     all: { label: 'All candidates', description: 'Expose every current ternary primitive candidate.', types: [...EXPERIMENTAL_PRIMITIVES], metadata: { purpose: 'exploration', logicalCostModel: 'sum primitive node costs' } },
@@ -27,12 +27,12 @@
     arithmetic: { label: 'Arithmetic core', description: 'Small set focused on balanced-ternary arithmetic experiments.', types: ['negate', 'compare', 'adjust3', 'normalize-carry'], metadata: { purpose: 'arithmetic', logicalCostModel: 'sum primitive node costs' } },
   };
   const PRIMITIVE_GROUPS = [
-    { label: 'Inputs & observation', types: ['trit-input', 'ternary-reference', 'sequence-generator', 'probe'] },
+    { label: 'User I/O peripherals', types: ['input-button3', 'input-joystick3', 'input-joystick6', 'seven-segment-display', 'word-display6'] },
+    { label: 'Test, debug & internal sources', types: ['trit-input', 'word-input6', 'ternary-reference', 'sequence-generator', 'probe', 'decimal-debug6'] },
     { label: 'Logic & signal shaping', types: ['negate', 'min', 'max', 'threshold3', 'restore3', 'pass3', 'merge3'] },
     { label: 'Compare & routing', types: ['compare', 'select3', 'route3', 'control3'] },
     { label: 'Arithmetic', types: ['adjust3', 'normalize-carry'] },
     { label: 'State & timing', types: ['latch3', 'register3', 'register-bank3', 'storage-node3', 'clock-phase3'] },
-    { label: 'Output', types: ['seven-segment-display'] },
   ];
   const primitiveExperiment = { activeId: 'all', customTypes: new Set(EXPERIMENTAL_PRIMITIVES) };
   const PROJECT_FORMAT_VERSION = 6;
@@ -127,9 +127,11 @@
   function componentLayoutSize(component) {
     const definition = registry.get(component.type);
     const visual = component.type === 'seven-segment-display' || component.type === 'component-seven-segment-display' || definition.visual?.kind === 'seven-segment';
-    const width = visual ? 240 : component.type === 'select3' ? 170 : 150;
+    const wordDisplay = component.type === 'word-display6';
+    const decimalDebug = component.type === 'decimal-debug6';
+    const width = visual ? 240 : wordDisplay ? 260 : decimalDebug ? 250 : component.type === 'select3' ? 170 : 150;
     const rows = Math.max(definition.inputs.length, definition.outputs.length, 1);
-    return { width, height: Math.max(visual ? 240 : 78, 48 + rows * 24) };
+    return { width, height: Math.max(visual ? 240 : wordDisplay || decimalDebug ? 200 : 78, 48 + rows * 24) };
   }
 
   function autoLayoutCircuit() {
@@ -383,7 +385,28 @@
     if (['trit-input', 'ternary-reference'].includes(component.type)) {
       const currentValue = trit(component.state.value);
       const valueLabel = component.type === 'ternary-reference' ? 'Reference level' : 'Input value';
-      extra += `<div class="cost-note trit-value-editor"><strong>${valueLabel}</strong><div class="selection-actions trit-choice" role="group" aria-label="Set trit input value"><button type="button" data-trit-value="-1"${currentValue === -1 ? ' class="active"' : ''}>−1</button><button type="button" data-trit-value="0"${currentValue === 0 ? ' class="active"' : ''}>0</button><button type="button" data-trit-value="1"${currentValue === 1 ? ' class="active"' : ''}>+1</button></div></div>`;
+      const exceptionalChoices = component.type === 'trit-input' ? `<button type="button" data-trit-value="Z"${currentValue === 'Z' ? ' class="active"' : ''}>Z</button><button type="button" data-trit-value="unknown"${currentValue === null ? ' class="active"' : ''}>?</button>` : '';
+      extra += `<div class="cost-note trit-value-editor"><strong>${valueLabel}</strong><div class="selection-actions trit-choice" role="group" aria-label="Set trit input value"><button type="button" data-trit-value="-1"${currentValue === -1 ? ' class="active"' : ''}>−1</button><button type="button" data-trit-value="0"${currentValue === 0 ? ' class="active"' : ''}>0</button><button type="button" data-trit-value="1"${currentValue === 1 ? ' class="active"' : ''}>+1</button>${exceptionalChoices}</div>${component.type === 'trit-input' ? '<br><span>−1 / 0 / +1 drive a known level; Z is floating and ? is an explicitly unknown external drive.</span>' : ''}</div>`;
+    }
+    if (component.type === 'word-input6') {
+      const values = Array.isArray(component.state.values) ? component.state.values : [0, 0, 0, 0, 0, 0];
+      const choices = [-1, 0, 1, 'Z', null];
+      const labelFor = (value) => value === null ? '?' : value === 'Z' ? 'Z' : fmt(value);
+      extra += `<div class="cost-note trit-value-editor"><strong>Word input · t5 … t0</strong><br><span>Each lane is an independent external drive.</span>${['t5', 't4', 't3', 't2', 't1', 't0'].map((name, index) => `<div class="word-input-choice"><span>${name}</span><div class="selection-actions trit-choice" role="group" aria-label="Set ${name} input value">${choices.map((value) => { const key = value === null ? 'unknown' : value; return `<button type="button" data-word-trit-index="${index}" data-word-trit-value="${key}"${trit(values[index]) === value ? ' class="active"' : ''}>${labelFor(value)}</button>`; }).join('')}</div></div>`).join('')}</div>`;
+    }
+    if (component.type === 'input-button3') {
+      const released = trit(component.state.releasedValue), pressed = trit(component.state.pressedValue);
+      const option = (value, selected) => `<option value="${value}"${selected === value ? ' selected' : ''}>${fmt(value)}</option>`;
+      extra += `<details class="layout-editor input-button-editor" open><summary>Input button</summary><label class="editor-field">Mode<select id="buttonMode"><option value="momentary"${component.state.mode === 'momentary' ? ' selected' : ''}>Momentary</option><option value="toggle"${component.state.mode === 'toggle' ? ' selected' : ''}>Toggle</option><option value="pulse"${component.state.mode === 'pulse' ? ' selected' : ''}>Pulse</option></select></label><div class="field-grid"><label class="editor-field">Released<select id="buttonReleased">${[-1, 0, 1].map((value) => option(value, released)).join('')}</select></label><label class="editor-field">Pressed<select id="buttonPressed">${[-1, 0, 1].map((value) => option(value, pressed)).join('')}</select></label></div><label class="editor-field">Pulse duration (ms)<input id="buttonPulseMs" type="number" min="20" max="5000" step="10" value="${Math.max(20, Number(component.state.pulseMs) || 120)}" /></label><div class="selection-actions"><button id="applyInputButtonBtn" type="button">Apply button</button></div><span>Momentary drives Pressed while held. Toggle changes on each press. Pulse drives Pressed for the declared external duration.</span></details>`;
+    }
+    if (component.type === 'input-joystick3') {
+      const currentX = trit(component.state.x), currentY = trit(component.state.y);
+      extra += `<div class="cost-note joystick-editor"><strong>Ternary joystick</strong><br><span>x = ${fmt(currentX)} · y = ${fmt(currentY)}</span><div class="joystick-choice" role="group" aria-label="Set joystick position">${[1, 0, -1].map((y) => [-1, 0, 1].map((x) => `<button type="button" data-joystick-x="${x}" data-joystick-y="${y}"${currentX === x && currentY === y ? ' class="active"' : ''} aria-label="x ${fmt(x)}, y ${fmt(y)}">${x === 0 && y === 0 ? '●' : '•'}</button>`).join('')).join('')}</div><span>Top is y = +1; right is x = +1. Corners are diagonals.</span></div>`;
+    }
+    if (component.type === 'input-joystick6') {
+      const x = Number(component.state.x), y = Number(component.state.y);
+      const axisText = (value) => value === 'Z' ? 'Z' : value === null || value === undefined ? '?' : Number.isFinite(Number(value)) ? String(Math.round(Number(value))) : '?';
+      extra += `<details class="layout-editor" open><summary>Analog 6-trit joystick</summary><span>Current external state: x = ${axisText(component.state.x)} · y = ${axisText(component.state.y)}</span><div class="field-grid"><label class="editor-field">X (−364 … +364)<input id="analogJoystickX" type="number" min="-364" max="364" step="1" value="${Number.isFinite(x) ? x : 0}" /></label><label class="editor-field">Y (−364 … +364)<input id="analogJoystickY" type="number" min="-364" max="364" step="1" value="${Number.isFinite(y) ? y : 0}" /></label></div><div class="selection-actions"><button id="applyAnalogJoystickBtn" type="button">Set position</button><button id="centerAnalogJoystickBtn" type="button">Center</button></div><span>Drag the pad on the block for analog input. The center 12% radius is a dead zone; X/Y are quantized to six balanced trits each.</span></details>`;
     }
     if (component.type === 'sequence-generator') {
       const sequence = normalizeSequence(component.state.sequence);
@@ -455,7 +478,8 @@
 
     if (['trit-input', 'ternary-reference'].includes(component.type)) {
       inspectorEl.querySelectorAll('[data-trit-value]').forEach((button) => button.addEventListener('click', () => {
-        const value = Number(button.dataset.tritValue);
+        const rawValue = button.dataset.tritValue;
+        const value = rawValue === 'Z' ? 'Z' : rawValue === 'unknown' ? null : Number(rawValue);
         if (trit(component.state.value) === value) return;
         beginHistory('Set trit input');
         circuit().setState(component.id, { value });
@@ -464,6 +488,49 @@
         renderer.selectComponent(component.id);
         setStatus(`Trit input set to ${fmt(value)}.`);
       }));
+    }
+    if (component.type === 'word-input6') {
+      inspectorEl.querySelectorAll('[data-word-trit-index]').forEach((button) => button.addEventListener('click', () => {
+        const index = Number(button.dataset.wordTritIndex);
+        const rawValue = button.dataset.wordTritValue;
+        const value = rawValue === 'Z' ? 'Z' : rawValue === 'unknown' ? null : Number(rawValue);
+        const values = Array.isArray(component.state.values) ? [...component.state.values] : [0, 0, 0, 0, 0, 0];
+        if (trit(values[index]) === value) return;
+        values[index] = value;
+        beginHistory('Set word input trit');
+        circuit().setState(component.id, { values });
+        commitHistory('Set word input trit');
+        renderer.rebuild();
+        renderer.selectComponent(component.id);
+        setStatus(`Word input ${['t5', 't4', 't3', 't2', 't1', 't0'][index]} set to ${fmt(value)}.`);
+      }));
+    }
+    if (component.type === 'input-button3') {
+      $('applyInputButtonBtn').addEventListener('click', () => {
+        const releasedValue = Number($('buttonReleased').value), pressedValue = Number($('buttonPressed').value);
+        if (releasedValue === pressedValue) return setStatus('A button needs two distinct released and pressed levels.', true);
+        beginHistory('Configure input button');
+        circuit().setState(component.id, { mode: $('buttonMode').value, releasedValue, pressedValue, pulseMs: Math.max(20, Math.min(5000, Number($('buttonPulseMs').value) || 120)), pressed: false });
+        commitHistory('Configure input button');
+        renderer.rebuild(); renderer.selectComponent(component.id);
+        setStatus(`Input button configured: ${fmt(releasedValue)} released, ${fmt(pressedValue)} pressed.`);
+      });
+    }
+    if (component.type === 'input-joystick3') {
+      inspectorEl.querySelectorAll('[data-joystick-x]').forEach((button) => button.addEventListener('click', () => {
+        const x = Number(button.dataset.joystickX), y = Number(button.dataset.joystickY);
+        if (trit(component.state.x) === x && trit(component.state.y) === y) return;
+        beginHistory('Set joystick position'); circuit().setState(component.id, { x, y }); commitHistory('Set joystick position');
+        renderer.rebuild(); renderer.selectComponent(component.id); setStatus(`Joystick set to x=${fmt(x)}, y=${fmt(y)}.`);
+      }));
+    }
+    if (component.type === 'input-joystick6') {
+      const setPosition = (x, y, name) => {
+        beginHistory(name); circuit().setState(component.id, { x: Math.max(-364, Math.min(364, Math.round(x))), y: Math.max(-364, Math.min(364, Math.round(y))) }); commitHistory(name);
+        renderer.rebuild(); renderer.selectComponent(component.id); setStatus(`Analog joystick set to x=${Math.max(-364, Math.min(364, Math.round(x)))}, y=${Math.max(-364, Math.min(364, Math.round(y)))}.`);
+      };
+      $('applyAnalogJoystickBtn').addEventListener('click', () => setPosition(Number($('analogJoystickX').value), Number($('analogJoystickY').value), 'Set analog joystick position'));
+      $('centerAnalogJoystickBtn').addEventListener('click', () => setPosition(0, 0, 'Center analog joystick'));
     }
     if (component.type === 'sequence-generator') {
       const applyPreset = () => {
@@ -1089,7 +1156,11 @@
 
   function primitiveSubtitle(type) {
     const descriptions = {
-      'trit-input': '-1 / 0 / +1',
+      'trit-input': 'test source: −1 / 0 / +1 / Z / ?',
+      'word-input6': 'test source: six ternary word lanes',
+      'input-button3': 'user I/O: clickable two-level control',
+      'input-joystick3': 'user I/O: clickable ternary x/y controller',
+      'input-joystick6': 'user I/O: drag-based x/y words, −364 … +364 per axis',
       'ternary-reference': 'fixed -1 / 0 / +1 structural rail',
       'sequence-generator': 'clock / ternary / custom sequence',
       latch3: 'transparent ternary storage while enable = +1',
@@ -1110,7 +1181,9 @@
       merge3: 'one driven path or Z; contention → ?',
       'storage-node3': 'ideal gated ternary storage node',
       'seven-segment-display': '8 inputs: A–G + sign; 0 = off, +1 = on',
-      probe: 'read a trit',
+      'word-display6': 'user I/O: visible − / 0 / + word lanes',
+      'decimal-debug6': 'debug only: inspect a six-trit word as decimal',
+      probe: 'debug observer: read a trit',
     };
     return descriptions[type] || registry.get(type).label;
   }

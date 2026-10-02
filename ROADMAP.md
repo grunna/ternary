@@ -234,7 +234,7 @@ A component must never become a magic shortcut: every high-level behavior needs 
 - [x] Record the two-state segment-control boundary
 - [x] Decide how a multi-trit value is shown natively: one visible `− / 0 / +` glyph per trit, most-significant first
 - [x] Defer balanced-ternary → decimal conversion until multi-trit arithmetic exists; treat it as an optional debugger/peripheral adapter
-- [ ] Build the three-decimal-position `−364 … +364` peripheral only after its ternary word converter has a structural implementation
+- Decimal rendering is intentionally not an end-user peripheral. A debug-only six-trit decimal observer is allowed for inspection; a real decimal output remains a user-composed module from explicit conversion logic and multiple 7-segment displays.
 
 ## Component sharing and demo projects
 - [x] Separate reusable component library from demo-project intent
@@ -270,9 +270,20 @@ This phase ends with tested, reusable word-level operations. It deliberately doe
 I/O components are explicit external adapters: they consume or produce public ternary signals but do not become hidden logical primitives. `Z` and `?` must remain visible at every peripheral boundary.
 
 - [x] Define the shared I/O-adapter contract: driven inputs, sampled outputs, update timing, reset and `Z` / `?` presentation
-- [ ] Build an interactive one-trit input peripheral with a declared external-control boundary
-- [ ] Build a reusable interactive 6-trit word input from six aligned trit inputs
-- [ ] Build a native 6-trit word output with one visible `− / 0 / +` glyph per lane and explicit unknown/floating presentation
+- [x] Visibly distinguish end-user I/O peripherals from test/debug sources and reusable-module interface ports
+- [x] Build an interactive one-trit input peripheral with a declared external-control boundary
+- [x] Build a reusable interactive 6-trit word input from six aligned trit inputs
+- [x] Define the two-state input-button contract: released/pressed levels, momentary/toggle/pulse modes and timing
+- [x] Build a clickable input-button external adapter; default `0` released / `+1` pressed, with configurable two-level mapping
+- [x] Ensure buttons expose their configured inactive/active levels in Inspector and never silently treat `Z` / `?` as a press
+- [x] Define a ternary joystick contract with independent `x` and `y` axes, each `−1 / 0 / +1`
+- [x] Build a clickable joystick external adapter with center, cardinal and diagonal positions
+- [x] Define the analog joystick word contract: six balanced trits per axis (`x5…x0`, `y5…y0`), each `−364 … +364`
+- [x] Build a drag-based analog joystick peripheral with 12 total output trits and a visible center/dead-zone policy
+- [x] Test analog joystick quantization, axis extremes, center, diagonals and `Z` / `?` presentation at its I/O boundary
+- [ ] Defer higher-resolution joystick axes until a wider word interface is justified; name width per axis explicitly (for example 12 trits per axis, not an ambiguous “12-trit joystick”)
+- [x] Build a native 6-trit word output with one visible `− / 0 / +` glyph per lane and explicit unknown/floating presentation
+- [x] Add a non-structural 6-trit decimal debug observer for quick inspection of settled known words
 - [ ] Package LED/probe-style trit and word outputs as reusable external adapters
 - [ ] Define the opening pixel-display port contract: balanced `x`, `y`, colour/data, write, clock and reset
 - [ ] Build a small `Pixel Display 3×3` peripheral with ternary coordinates and explicit pixel-state update semantics
@@ -336,6 +347,8 @@ Memory is completed before CPU integration. It must be a reusable, inspectable s
 - [ ] Run arithmetic, memory and branch programs end-to-end
 - [ ] Verify each instruction by its register, PC and memory state transitions
 - [ ] Keep every CPU subsystem drillable down to its structural reference or documented cell boundary
+- [ ] Build a top-level computer console: external input peripherals → drillable Computer component → external output peripherals
+- [ ] Give the console explicit `Run computer`, clock/instruction step and reset controls; keep these separate from the simulator propagation controls
 
 ## Phase 19 — CPU debugging
 - [ ] Load a small ternary program

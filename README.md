@@ -199,7 +199,7 @@ Choose **3-trit signed display decoder** to load an opening fixed-range experime
 
 **First CPU word decision:** the first CPU uses six balanced trits, covering `−364 … +364` (729 states). It is deliberately small enough to keep the first register, ALU and display experiments open and understandable.
 
-**Native multi-trit display decision:** CPU words will be shown directly as a row of `−`, `0` and `+` glyphs, one per trit with the most-significant trit on the left. For example, `+ 0 −` means `(+1 × 9) + (0 × 3) + (−1 × 1) = +8`. This has no separate sign trit and requires no number conversion. Balanced-ternary-to-decimal display is deferred until multi-trit arithmetic exists. It will be an optional, opening peripheral made from reusable parts: a six-trit word converter, digit decoders and three 7-segment displays. Three decimal positions comfortably cover the first CPU range, `−364 … +364`.
+**Native multi-trit display decision:** CPU words are shown directly as a row of `−`, `0` and `+` glyphs, one per trit with the most-significant trit on the left. For example, `+ 0 −` means `(+1 × 9) + (0 × 3) + (−1 × 1) = +8`. This has no separate sign trit and requires no number conversion. Balanced-ternary-to-decimal rendering is deliberately not built into the debugger: a user who wants it can build an explicit converter and connect multiple 7-segment displays.
 
 ## Six-trit CPU word
 
@@ -246,6 +246,22 @@ Choose **6-trit ALU** to load the selected reusable component. Set `Op` to `−1
 I/O components are explicit external adapters, not extra ternary logic primitives. Inputs drive a declared trit/word value after normal propagation; output devices only observe settled signals and never feed a value back. A clocked peripheral, such as the planned pixel display, changes its own state only on its documented clock edge.
 
 Every I/O device must show `Z` (floating) and `?` (unknown/invalid) distinctly from logical `0`. It must also declare its port contract, reset behavior and update timing in the Inspector.
+
+The library distinguishes three things that can otherwise look alike: **User I/O peripherals** are controls and displays intended for a person using the finished machine; **Test, debug & internal sources** drive or observe signals while designing and diagnosing circuits; **Module interface** blocks only declare ports on a reusable component. A `Component Input` is therefore not a physical user button, and a `Probe` is not a finished-machine display.
+
+**Interactive trit input** is the first I/O source adapter. Add it from **Inputs & observation**, then select it: the Inspector can drive `−1`, `0`, `+1`, `Z` or `?`. Clicking its value badge in the workspace remains a quick cycle through the three known trit levels.
+
+**Interactive 6-trit word input** is the matching word-level adapter. Its Inspector has independent controls for `t5 … t0`, so several inputs can drive different words at the same time. Each lane can independently be `−1`, `0`, `+1`, `Z` or `?`.
+
+**Interactive input button** is a two-level source for user controls. Click its `PRESS` area in the workspace. In Inspector, choose momentary, toggle or pulse behavior and the released/pressed levels; it defaults to `0` released and `+1` pressed.
+
+**Interactive ternary joystick** has independent `x` and `y` outputs. Click a position on its 3×3 pad in the workspace or Inspector: center is `0,0`, cardinal positions use one nonzero axis, and corners produce diagonal `−1/+1` combinations.
+
+**Interactive analog 6-trit joystick** has six output lanes for each axis: `x5…x0` and `y5…y0`. Drag its pad to generate independent values from `−364` to `+364`; the small center dead zone resolves to zero. Inspector also permits exact numeric positions. It uses the same six-trit word width as the current datapath, so no scaling adapter is needed.
+
+**6-trit word display** is an end-user output peripheral. Connect `t5…t0` and it renders one glyph per lane: `−`, `0`, `+`, `Z` or `?`. It observes signals only; it has no output back into the circuit.
+
+**6-trit decimal debug view** is not a peripheral or structural conversion component. It is a test/debug observer that quickly shows a settled known `t5…t0` word as its decimal value (`−364 … +364`). It shows an invalid marker when any lane is `Z` or `?` and has no output back into the circuit.
 
 ## Register bank
 
