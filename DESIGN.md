@@ -13,6 +13,8 @@ This is the project’s definition of physically viable: the logic is structural
 | Component | Contract / role | Decision and rationale |
 | --- | --- | --- |
 | Driven, floating and unknown | `-1`, `0`, `+1` driven; `Z` floating; `?` unresolved | Keep both `Z` and `?` distinct from logical zero. A disabled pass cell emits `Z`; logic requiring a driven value turns `Z` or `?` into `?`, so missing drive cannot silently select a path. |
+| Resolved Merge3 | `a,b,c → out` | Ideal interconnect cell for mutually exclusive pass paths. Exactly one non-`Z` driver reaches `out`; all `Z` produces `Z`; any contention or unknown drive produces `?`. It makes bus ownership explicit instead of silently selecting a driver. |
+| Ternary reference rail | fixed `-1`, `0` or `+1` → out | Explicit ideal reference source for structural circuits. It replaces hidden simulator constants; a `Route3` structural implementation uses a declared zero rail to drive its inactive outputs to logical zero. |
 | Normalize / carry | `A+B+C = Sum + 3×Carry` | Arithmetic reference primitive. It gives a compact, exhaustive-testable full-adder contract and is retained as the baseline rather than silently replaced by experimental alternatives. |
 | Compare | `a,b → -1,0,+1` | Direct comparator reference. A normalized-difference construction is retained as an explored alternative, but costs more logical nodes and depth. |
 | Select3 | `neg,zero,pos,select → out` | Native three-way data selection is preferred over a binary mux tree when all three choices are meaningful. Its 81-case contract is the routing baseline. |
@@ -36,7 +38,7 @@ This is the project’s definition of physically viable: the logic is structural
 
 ### Signal contract
 
-`-1`, `0` and `+1` are driven ternary levels. `?` means the simulator cannot determine a value. `Z` means a structural pass device intentionally does not drive the wire. A restorer requires a driven level; receiving `?` or `Z` produces `?`. This single-driver model does not yet resolve multiple `Z`/driver sources.
+`-1`, `0` and `+1` are driven ternary levels. `?` means the simulator cannot determine a value. `Z` means a structural pass device intentionally does not drive the wire. A restorer requires a driven level; receiving `?` or `Z` produces `?`. Ordinary component inputs retain a single driver; `Merge3` is the explicit exception at an interconnect boundary. It accepts exactly one non-`Z` branch, returns `Z` when all branches float, and returns `?` for any contention or unresolved branch.
 
 The device cells are a deliberate lower structural layer beneath functional logic cells. They make level detection, restoration, gated transmission and storage visible and testable, while the project deliberately leaves transistor technology, voltage/current encoding, electrical margins, power and delay out of scope.
 

@@ -15,17 +15,17 @@
 
   const simulation = { mode: 'run', previousMode: 'run', timer: null, generatorTimer: null, generatorLastTick: performance.now(), activeUnsubscribers: [] };
 
-  const UTILITY_PRIMITIVES = ['trit-input', 'sequence-generator', 'latch3', 'register3', 'register-bank3', 'seven-segment-display', 'probe'];
-  const EXPERIMENTAL_PRIMITIVES = ['negate', 'compare', 'select3', 'route3', 'adjust3', 'control3', 'threshold3', 'restore3', 'pass3', 'storage-node3', 'clock-phase3', 'min', 'max', 'normalize-carry'];
+  const UTILITY_PRIMITIVES = ['trit-input', 'ternary-reference', 'sequence-generator', 'latch3', 'register3', 'register-bank3', 'seven-segment-display', 'probe'];
+  const EXPERIMENTAL_PRIMITIVES = ['negate', 'compare', 'select3', 'route3', 'adjust3', 'control3', 'threshold3', 'restore3', 'pass3', 'merge3', 'ternary-reference', 'storage-node3', 'clock-phase3', 'min', 'max', 'normalize-carry'];
   const PRIMITIVE_SETS = {
     all: { label: 'All candidates', description: 'Expose every current ternary primitive candidate.', types: [...EXPERIMENTAL_PRIMITIVES], metadata: { purpose: 'exploration', logicalCostModel: 'sum primitive node costs' } },
     minmax: { label: 'MIN / MAX', description: 'Explore symmetric MIN, MAX and negate logic, with normalize/carry for arithmetic experiments.', types: ['negate', 'min', 'max', 'normalize-carry'], metadata: { purpose: 'min/max ternary logic', logicalCostModel: 'sum primitive node costs' } },
-    selector: { label: 'Compare / Select', description: 'Explore compare and native three-way routing as the main ternary building blocks.', types: ['negate', 'compare', 'select3', 'route3', 'adjust3', 'control3', 'threshold3', 'restore3', 'pass3', 'storage-node3', 'clock-phase3', 'normalize-carry'], metadata: { purpose: 'comparison/routing architecture', logicalCostModel: 'sum primitive node costs' } },
+    selector: { label: 'Compare / Select', description: 'Explore compare and native three-way routing as the main ternary building blocks.', types: ['negate', 'compare', 'select3', 'route3', 'adjust3', 'control3', 'threshold3', 'restore3', 'pass3', 'merge3', 'storage-node3', 'clock-phase3', 'normalize-carry'], metadata: { purpose: 'comparison/routing architecture', logicalCostModel: 'sum primitive node costs' } },
     arithmetic: { label: 'Arithmetic core', description: 'Small set focused on balanced-ternary arithmetic experiments.', types: ['negate', 'compare', 'adjust3', 'normalize-carry'], metadata: { purpose: 'arithmetic', logicalCostModel: 'sum primitive node costs' } },
   };
   const PRIMITIVE_GROUPS = [
-    { label: 'Inputs & observation', types: ['trit-input', 'sequence-generator', 'probe'] },
-    { label: 'Logic & signal shaping', types: ['negate', 'min', 'max', 'threshold3', 'restore3', 'pass3'] },
+    { label: 'Inputs & observation', types: ['trit-input', 'ternary-reference', 'sequence-generator', 'probe'] },
+    { label: 'Logic & signal shaping', types: ['negate', 'min', 'max', 'threshold3', 'restore3', 'pass3', 'merge3'] },
     { label: 'Compare & routing', types: ['compare', 'select3', 'route3', 'control3'] },
     { label: 'Arithmetic', types: ['adjust3', 'normalize-carry'] },
     { label: 'State & timing', types: ['latch3', 'register3', 'register-bank3', 'storage-node3', 'clock-phase3'] },
@@ -376,9 +376,10 @@
         <div class="selection-actions"><button id="renameBoundaryBtn" type="button">Rename port</button></div>`;
     }
 
-    if (component.type === 'trit-input') {
+    if (['trit-input', 'ternary-reference'].includes(component.type)) {
       const currentValue = trit(component.state.value);
-      extra += `<div class="cost-note trit-value-editor"><strong>Input value</strong><div class="selection-actions trit-choice" role="group" aria-label="Set trit input value"><button type="button" data-trit-value="-1"${currentValue === -1 ? ' class="active"' : ''}>−1</button><button type="button" data-trit-value="0"${currentValue === 0 ? ' class="active"' : ''}>0</button><button type="button" data-trit-value="1"${currentValue === 1 ? ' class="active"' : ''}>+1</button></div></div>`;
+      const valueLabel = component.type === 'ternary-reference' ? 'Reference level' : 'Input value';
+      extra += `<div class="cost-note trit-value-editor"><strong>${valueLabel}</strong><div class="selection-actions trit-choice" role="group" aria-label="Set trit input value"><button type="button" data-trit-value="-1"${currentValue === -1 ? ' class="active"' : ''}>−1</button><button type="button" data-trit-value="0"${currentValue === 0 ? ' class="active"' : ''}>0</button><button type="button" data-trit-value="1"${currentValue === 1 ? ' class="active"' : ''}>+1</button></div></div>`;
     }
     if (component.type === 'sequence-generator') {
       const sequence = normalizeSequence(component.state.sequence);
@@ -444,7 +445,7 @@
       setStatus('Component renamed.');
     });
 
-    if (component.type === 'trit-input') {
+    if (['trit-input', 'ternary-reference'].includes(component.type)) {
       inspectorEl.querySelectorAll('[data-trit-value]').forEach((button) => button.addEventListener('click', () => {
         const value = Number(button.dataset.tritValue);
         if (trit(component.state.value) === value) return;
@@ -598,6 +599,57 @@
     ]));
   }
 
+  function evaluateComponentType(type, valuesByName) {
+    const definition = registry.get(type);
+    const isolated = new Circuit(registry);
+    const inputs = new Map();
+    for (const name of definition.inputs) {
+      const input = isolated.addComponent('trit-input', -160, 0, { value: trit(valuesByName[name]) });
+      inputs.set(name, input);
+    }
+    const target = isolated.addComponent(type, 0, 0);
+    for (const [name, input] of inputs) isolated.connect(input.id, 'out', target.id, name);
+    isolated.simulate();
+    return Object.fromEntries(definition.outputs.map((name) => [name, trit(target.outputs[name])]));
+  }
+
+  function runDirectEquivalenceTests(meta) {
+    const directType = meta?.experiment?.equivalence?.directType;
+    if (!directType) return;
+    const structuralBoundary = boundaryPorts(meta.circuit);
+    const suite = testSuites.find((entry) => entry.componentId === meta.id) || { cases: [] };
+    const inputById = new Map(structuralBoundary.inputs.map((port) => [port.componentId, port.name]));
+    const outputById = new Map(structuralBoundary.outputs.map((port) => [port.componentId, port.name]));
+    const list = document.createElement('div');
+    list.className = 'component-test-run-list';
+    let failures = 0;
+    for (const testCase of suite.cases) {
+      const row = document.createElement('div');
+      row.className = 'component-test-run';
+      try {
+        const values = {};
+        for (const [id, name] of inputById) {
+          if (!(id in (testCase.inputs || {}))) throw new Error('saved case is missing input ' + name);
+          values[name] = trit(testCase.inputs[id]);
+        }
+        const structural = evaluateComponentType(meta.type, values);
+        const direct = evaluateComponentType(directType, values);
+        const mismatches = [...outputById.values()].filter((name) => structural[name] !== direct[name]);
+        if (mismatches.length) {
+          failures += 1; row.classList.add('failed');
+          row.textContent = (testCase.name || 'Unnamed case') + ' — mismatch: ' + mismatches.map((name) => name + ' structural ' + fmt(structural[name]) + ', direct ' + fmt(direct[name])).join('; ');
+        } else {
+          row.classList.add('passed'); row.textContent = (testCase.name || 'Unnamed case') + ' — equivalent';
+        }
+      } catch (error) {
+        failures += 1; row.classList.add('failed'); row.textContent = (testCase.name || 'Unnamed case') + ' — could not compare: ' + error.message;
+      }
+      list.appendChild(row);
+    }
+    renderTestResults('Direct equivalence: ' + (suite.cases.length - failures) + '/' + suite.cases.length + ' passed', list, failures ? 'has-failures' : 'all-passed');
+    setStatus(failures ? failures + ' direct-equivalence case' + (failures === 1 ? '' : 's') + ' failed.' : 'Structural and direct implementations are equivalent for all ' + suite.cases.length + ' saved cases.', Boolean(failures));
+  }
+
   function renderTestResults(title, content, modifier = '') {
     const result = document.createElement('div');
     result.className = `component-test-results ${modifier}`.trim();
@@ -647,6 +699,15 @@
     exhaustive.disabled = boundaries.inputs.length > 6;
     exhaustive.title = boundaries.inputs.length > 6 ? 'Exhaustive runs are limited to six inputs (729 combinations).' : '';
     exhaustive.addEventListener('click', () => runExhaustiveTruthTable(boundaries));
+    const meta = customComponents.get(current.customId);
+    const directType = meta?.experiment?.equivalence?.directType;
+    if (directType) {
+      const compare = document.createElement('button');
+      compare.type = 'button'; compare.textContent = 'Compare direct'; compare.disabled = !suite?.cases.length;
+      compare.title = 'Run the saved cases against this structural component and ' + (registry.get(directType)?.label || directType) + '.';
+      compare.addEventListener('click', () => runDirectEquivalenceTests(meta));
+      controls.append(compare);
+    }
     controls.append(name, save, runSaved, exhaustive);
     group.appendChild(controls);
 
@@ -890,6 +951,7 @@
   function primitiveSubtitle(type) {
     const descriptions = {
       'trit-input': '-1 / 0 / +1',
+      'ternary-reference': 'fixed -1 / 0 / +1 structural rail',
       'sequence-generator': 'clock / ternary / custom sequence',
       latch3: 'transparent ternary storage while enable = +1',
       register3: 'D flip-flop: LOAD on clock 0 → +1',
@@ -906,6 +968,7 @@
       threshold3: 'detect negative / zero / positive level',
       restore3: 'restore an ideal ternary level',
       pass3: 'controlled ternary pass switch',
+      merge3: 'one driven path or Z; contention → ?',
       'storage-node3': 'ideal gated ternary storage node',
       'seven-segment-display': '8 inputs: A–G + sign; 0 = off, +1 = on',
       probe: 'read a trit',
@@ -1752,6 +1815,7 @@
     if ($('demoSelect').value === 'six-trit-adder') return buildSixTritAdderDemo();
     if ($('demoSelect').value === 'six-trit-subtractor') return buildSixTritSubtractorDemo();
     if ($('demoSelect').value === 'structural-storage') return buildStructuralStorageDemo();
+    if ($('demoSelect').value === 'structural-routing') return buildStructuralRoutingDemo();
     const label = uniqueName('Ternary Full Adder', [...customComponents.values()].map((meta) => meta.label), 'Ternary Full Adder');
     const id = `${slug(label)}-${Date.now().toString(36)}`;
     const inner = new Circuit(registry);
@@ -2004,12 +2068,27 @@
     const negProbe = rootCircuit.addComponent('probe', 340, -225, { label: 'Negative detected' });
     const zeroProbe = rootCircuit.addComponent('probe', 340, -155, { label: 'Zero detected' });
     const posProbe = rootCircuit.addComponent('probe', 340, -85, { label: 'Positive detected' });
+    const mergeA = rootCircuit.addComponent('trit-input', -410, 330, { value: -1, label: 'Merge A' });
+    const mergeAGate = rootCircuit.addComponent('trit-input', -410, 380, { value: 1, label: 'A gate' });
+    const mergeB = rootCircuit.addComponent('trit-input', -410, 470, { value: 0, label: 'Merge B' });
+    const mergeBGate = rootCircuit.addComponent('trit-input', -410, 520, { value: 0, label: 'B gate' });
+    const mergeC = rootCircuit.addComponent('trit-input', -410, 610, { value: 1, label: 'Merge C' });
+    const mergeCGate = rootCircuit.addComponent('trit-input', -410, 660, { value: 0, label: 'C gate' });
+    const mergePassA = rootCircuit.addComponent('pass3', -120, 330, { label: 'A pass' });
+    const mergePassB = rootCircuit.addComponent('pass3', -120, 470, { label: 'B pass' });
+    const mergePassC = rootCircuit.addComponent('pass3', -120, 610, { label: 'C pass' });
+    const merge = rootCircuit.addComponent('merge3', 100, 470, { label: 'Resolved merge' });
+    const mergeProbe = rootCircuit.addComponent('probe', 350, 470, { label: 'Merged output' });
     rootCircuit.connect(signal.id, 'out', restorer.id, 'in'); rootCircuit.connect(restorer.id, 'out', detector.id, 'in');
     rootCircuit.connect(restorer.id, 'out', pass.id, 'in'); rootCircuit.connect(switchGate.id, 'out', pass.id, 'gate'); rootCircuit.connect(pass.id, 'out', passProbe.id, 'in');
     rootCircuit.connect(restorer.id, 'out', storage.id, 'drive'); rootCircuit.connect(write.id, 'out', storage.id, 'write'); rootCircuit.connect(reset.id, 'out', storage.id, 'reset'); rootCircuit.connect(storage.id, 'q', nodeProbe.id, 'in');
     rootCircuit.connect(detector.id, 'neg', negProbe.id, 'in'); rootCircuit.connect(detector.id, 'zero', zeroProbe.id, 'in'); rootCircuit.connect(detector.id, 'pos', posProbe.id, 'in');
+    rootCircuit.connect(mergeA.id, 'out', mergePassA.id, 'in'); rootCircuit.connect(mergeAGate.id, 'out', mergePassA.id, 'gate'); rootCircuit.connect(mergePassA.id, 'out', merge.id, 'a');
+    rootCircuit.connect(mergeB.id, 'out', mergePassB.id, 'in'); rootCircuit.connect(mergeBGate.id, 'out', mergePassB.id, 'gate'); rootCircuit.connect(mergePassB.id, 'out', merge.id, 'b');
+    rootCircuit.connect(mergeC.id, 'out', mergePassC.id, 'in'); rootCircuit.connect(mergeCGate.id, 'out', mergePassC.id, 'gate'); rootCircuit.connect(mergePassC.id, 'out', merge.id, 'c');
+    rootCircuit.connect(merge.id, 'out', mergeProbe.id, 'in');
     renderer.select(null); renderLibrary(); updateStats(); resetHistory();
-    setStatus('Device cell demo loaded. Inspect ideal level detection/restoration, pass switching and gated storage before choosing a transistor technology.');
+    setStatus('Device cell demo loaded. The Merge3 section joins three pass paths: set exactly one gate to +1; all off yields Z and two enabled paths yield ? for contention.');
   }
 
   function addSixTritWordCases(componentId, inputs, outputs) {
@@ -2463,6 +2542,133 @@
     rootCircuit.connect(registerReference.id, 'q', registerReferenceQ.id, 'in'); rootCircuit.connect(registerStructural.id, 'q', registerStructuralQ.id, 'in');
     renderer.select(null); renderLibrary(); updateStats(); resetHistory();
     setStatus('Structural storage comparison loaded. Open a structural register, then a latch, to inspect its restorer, pass switch and storage-node cells. Inspector metrics compare nodes, depth, wires and canonical transitions.');
+  }
+
+  function buildStructuralRoutingDemo() {
+    const add = (labelBase, experiment, inputNames, outputNames, wire, cases) => {
+      const label = uniqueName(labelBase, [...customComponents.values()].map((meta) => meta.label), labelBase);
+      const id = `${slug(label)}-${Date.now().toString(36)}`;
+      const inner = new Circuit(registry);
+      const inputs = inputNames.map((name, index) => inner.addComponent('component-input', -430, (index - (inputNames.length - 1) / 2) * 75, { name }));
+      const outputs = outputNames.map((name, index) => inner.addComponent('component-output', 430, (index - (outputNames.length - 1) / 2) * 75, { name }));
+      wire(inner, inputs, outputs);
+      const meta = { id, type: `custom:${id}`, label, circuit: inner.serialize(), experiment };
+      customComponents.set(id, meta); registerCustom(meta); testSuites.push({ componentId: id, cases: cases(inputs, outputs) });
+      return meta;
+    };
+    const controlCases = (inputs, outputs) => [-1, 0, 1].map((control) => ({ id: `control-${control}`, name: `control=${fmt(control)}`, inputs: { [inputs[0].id]: control }, expectedOutputs: { [outputs[0].id]: control < 0 ? 1 : 0, [outputs[1].id]: control === 0 ? 1 : 0, [outputs[2].id]: control > 0 ? 1 : 0 } }));
+    const selectCases = (inputs, outputs) => { const cases = []; for (const neg of [-1, 0, 1]) for (const zero of [-1, 0, 1]) for (const pos of [-1, 0, 1]) for (const select of [-1, 0, 1]) cases.push({ id: `select-${neg}-${zero}-${pos}-${select}`, name: `select=${fmt(select)}`, inputs: { [inputs[0].id]: neg, [inputs[1].id]: zero, [inputs[2].id]: pos, [inputs[3].id]: select }, expectedOutputs: { [outputs[0].id]: select < 0 ? neg : select === 0 ? zero : pos } }); return cases; };
+    const routeCases = (inputs, outputs) => { const cases = []; for (const value of [-1, 0, 1]) for (const select of [-1, 0, 1]) cases.push({ id: `route-${value}-${select}`, name: `in=${fmt(value)}, select=${fmt(select)}`, inputs: { [inputs[0].id]: value, [inputs[1].id]: select }, expectedOutputs: { [outputs[0].id]: select < 0 ? value : 0, [outputs[1].id]: select === 0 ? value : 0, [outputs[2].id]: select > 0 ? value : 0 } }); return cases; };
+    const control = add('Control3 — structural level detector', { role: 'structural reference', equivalence: { directType: 'control3' }, nodeCount: 1, depth: 1, primitiveCounts: { threshold3: 1 }, rationale: 'Threshold3 already exposes the one-hot negative, zero and positive control rails.', validation: 'Exhaustive 3/3 control cases saved.' }, ['control'], ['neg', 'zero', 'pos'], (inner, inputs, outputs) => {
+      const detector = inner.addComponent('threshold3', 0, 0, { label: 'Decode control level' });
+      inner.connect(inputs[0].id, 'out', detector.id, 'in'); ['neg', 'zero', 'pos'].forEach((port, index) => inner.connect(detector.id, port, outputs[index].id, 'in'));
+    }, controlCases);
+    const select = add('Select3 — structural pass/merge', { role: 'structural reference', equivalence: { directType: 'select3' }, nodeCount: 5, depth: 3, primitiveCounts: { threshold3: 1, pass3: 3, merge3: 1 }, rationale: 'Decode select into one-hot gates, pass exactly one data path and resolve it through Merge3.', validation: 'Exhaustive 81/81 known-trit cases saved.' }, ['neg', 'zero', 'pos', 'select'], ['out'], (inner, inputs, outputs) => {
+      const detector = inner.addComponent('threshold3', -130, 120, { label: 'Decode select' });
+      const passes = ['neg', 'zero', 'pos'].map((name, index) => inner.addComponent('pass3', 70, (index - 1) * 75, { label: name + ' pass' }));
+      const merge = inner.addComponent('merge3', 250, 0, { label: 'Selected-path merge' });
+      inner.connect(inputs[3].id, 'out', detector.id, 'in');
+      ['neg', 'zero', 'pos'].forEach((name, index) => { inner.connect(inputs[index].id, 'out', passes[index].id, 'in'); inner.connect(detector.id, name, passes[index].id, 'gate'); inner.connect(passes[index].id, 'out', merge.id, ['a', 'b', 'c'][index]); });
+      inner.connect(merge.id, 'out', outputs[0].id, 'in');
+    }, selectCases);
+    const route = add('Route3 — structural gated/merged', { role: 'structural reference', equivalence: { directType: 'route3' }, nodeCount: 15, depth: 4, primitiveCounts: { threshold3: 1, 'clock-phase3': 3, 'ternary-reference': 1, pass3: 7, merge3: 3 }, rationale: 'Each output uses its selected data pass or a zero-reference pass. Merge3 makes the one active branch explicit; a shared disabled pass supplies Z as the unused third merge branch.', validation: 'Exhaustive 9/9 known-trit cases saved.' }, ['in', 'select'], ['neg', 'zero', 'pos'], (inner, inputs, outputs) => {
+      const detector = inner.addComponent('threshold3', -200, -80, { label: 'Decode route' });
+      const zero = inner.addComponent('ternary-reference', -200, 210, { value: 0, label: 'Zero reference' });
+      const open = inner.addComponent('pass3', -30, 260, { label: 'Open Z branch' });
+      const branches = ['neg', 'zero', 'pos'].map((name, index) => ({ name, inverse: inner.addComponent('clock-phase3', -20, (index - 1) * 120, { label: 'Not ' + name }), data: inner.addComponent('pass3', 150, (index - 1) * 120 - 30, { label: name + ' data pass' }), fill: inner.addComponent('pass3', 150, (index - 1) * 120 + 35, { label: name + ' zero pass' }), merge: inner.addComponent('merge3', 320, (index - 1) * 120, { label: name + ' output merge' }) }));
+      inner.connect(inputs[1].id, 'out', detector.id, 'in'); inner.connect(zero.id, 'out', open.id, 'in'); inner.connect(zero.id, 'out', open.id, 'gate');
+      branches.forEach((branch, index) => { inner.connect(detector.id, branch.name, branch.inverse.id, 'clock'); inner.connect(inputs[0].id, 'out', branch.data.id, 'in'); inner.connect(detector.id, branch.name, branch.data.id, 'gate'); inner.connect(zero.id, 'out', branch.fill.id, 'in'); inner.connect(branch.inverse.id, 'out', branch.fill.id, 'gate'); inner.connect(branch.data.id, 'out', branch.merge.id, 'a'); inner.connect(branch.fill.id, 'out', branch.merge.id, 'b'); inner.connect(open.id, 'out', branch.merge.id, 'c'); inner.connect(branch.merge.id, 'out', outputs[index].id, 'in'); });
+    }, routeCases);
+    const controlCases2 = (inputs, outputs, op) => { const cases = []; for (const a of [0, 1]) for (const b of [0, 1]) cases.push({ id: op + '-' + a + '-' + b, name: 'a=' + a + ', b=' + b, inputs: { [inputs[0].id]: a, [inputs[1].id]: b }, expectedOutputs: { [outputs[0].id]: op === 'and' ? (a && b ? 1 : 0) : (a || b ? 1 : 0) } }); return cases; };
+    const andGate = add('Control AND — structural', { role: 'structural utility', nodeCount: 6, depth: 3, primitiveCounts: { 'ternary-reference': 1, 'clock-phase3': 1, pass3: 3, merge3: 1 }, rationale: 'For one-hot 0/+1 control rails, A passes only when B is +1. The inverse-B zero path turns disabled transmission into an explicit logical zero before Merge3.', validation: 'Exhaustive 4/4 binary-control cases saved.' }, ['a', 'b'], ['out'], (inner, inputs, outputs) => {
+      const zero = inner.addComponent('ternary-reference', -160, 140, { value: 0, label: 'Zero reference' });
+      const invertB = inner.addComponent('clock-phase3', -120, 60, { label: 'Not B' });
+      const data = inner.addComponent('pass3', 40, -30, { label: 'A gated by B' });
+      const fill = inner.addComponent('pass3', 40, 40, { label: 'Zero when B is low' });
+      const open = inner.addComponent('pass3', 40, 120, { label: 'Open Z branch' });
+      const merge = inner.addComponent('merge3', 220, 0, { label: 'AND merge' });
+      inner.connect(inputs[1].id, 'out', invertB.id, 'clock'); inner.connect(inputs[0].id, 'out', data.id, 'in'); inner.connect(inputs[1].id, 'out', data.id, 'gate'); inner.connect(zero.id, 'out', fill.id, 'in'); inner.connect(invertB.id, 'out', fill.id, 'gate'); inner.connect(zero.id, 'out', open.id, 'in'); inner.connect(zero.id, 'out', open.id, 'gate'); inner.connect(data.id, 'out', merge.id, 'a'); inner.connect(fill.id, 'out', merge.id, 'b'); inner.connect(open.id, 'out', merge.id, 'c'); inner.connect(merge.id, 'out', outputs[0].id, 'in');
+    }, (inputs, outputs) => controlCases2(inputs, outputs, 'and'));
+    const orGate = add('Control OR — structural', { role: 'structural utility', nodeCount: 7, depth: 3, primitiveCounts: { 'ternary-reference': 2, 'clock-phase3': 1, pass3: 3, merge3: 1 }, rationale: 'For one-hot 0/+1 control rails, the +1 reference passes when A is high; otherwise B passes through the inverse-A path. Merge3 proves that only one branch drives.', validation: 'Exhaustive 4/4 binary-control cases saved.' }, ['a', 'b'], ['out'], (inner, inputs, outputs) => {
+      const high = inner.addComponent('ternary-reference', -160, 140, { value: 1, label: '+1 reference' });
+      const zero = inner.addComponent('ternary-reference', -160, 205, { value: 0, label: 'Zero reference' });
+      const invertA = inner.addComponent('clock-phase3', -120, 60, { label: 'Not A' });
+      const aHigh = inner.addComponent('pass3', 40, -30, { label: '+1 when A is high' });
+      const bPath = inner.addComponent('pass3', 40, 40, { label: 'B when A is low' });
+      const open = inner.addComponent('pass3', 40, 120, { label: 'Open Z branch' });
+      const merge = inner.addComponent('merge3', 220, 0, { label: 'OR merge' });
+      inner.connect(inputs[0].id, 'out', invertA.id, 'clock'); inner.connect(high.id, 'out', aHigh.id, 'in'); inner.connect(inputs[0].id, 'out', aHigh.id, 'gate'); inner.connect(inputs[1].id, 'out', bPath.id, 'in'); inner.connect(invertA.id, 'out', bPath.id, 'gate'); inner.connect(zero.id, 'out', open.id, 'in'); inner.connect(zero.id, 'out', open.id, 'gate'); inner.connect(aHigh.id, 'out', merge.id, 'a'); inner.connect(bPath.id, 'out', merge.id, 'b'); inner.connect(open.id, 'out', merge.id, 'c'); inner.connect(merge.id, 'out', outputs[0].id, 'in');
+    }, (inputs, outputs) => controlCases2(inputs, outputs, 'or'));
+    const minMaxCases = (inputs, outputs, op) => { const cases = []; for (const a of [-1, 0, 1]) for (const b of [-1, 0, 1]) cases.push({ id: op + '-' + a + '-' + b, name: 'a=' + fmt(a) + ', b=' + fmt(b), inputs: { [inputs[0].id]: a, [inputs[1].id]: b }, expectedOutputs: { [outputs[0].id]: op === 'min' ? Math.min(a, b) : Math.max(a, b) } }); return cases; };
+    const minGate = add('MIN — structural selector tree', { role: 'structural reference', equivalence: { directType: 'min' }, nodeCount: 12, depth: 6, primitiveCounts: { 'ternary-reference': 2, [select.type]: 2 }, rationale: 'First choose min(0,B): -1 for negative B and 0 otherwise. Then choose -1, that middle result or B according to A. Both selector instances are the open pass/merge Select3 structure.', validation: 'Exhaustive 9/9 a,b cases saved.' }, ['a', 'b'], ['out'], (inner, inputs, outputs) => {
+      const neg = inner.addComponent('ternary-reference', -250, -130, { value: -1, label: '-1 reference' });
+      const zero = inner.addComponent('ternary-reference', -250, 130, { value: 0, label: 'Zero reference' });
+      const minZeroB = inner.addComponent(select.type, 0, 70, { label: 'min(0, B)' });
+      const outer = inner.addComponent(select.type, 230, 0, { label: 'Select by A' });
+      inner.connect(neg.id, 'out', minZeroB.id, 'neg'); inner.connect(zero.id, 'out', minZeroB.id, 'zero'); inner.connect(zero.id, 'out', minZeroB.id, 'pos'); inner.connect(inputs[1].id, 'out', minZeroB.id, 'select');
+      inner.connect(neg.id, 'out', outer.id, 'neg'); inner.connect(minZeroB.id, 'out', outer.id, 'zero'); inner.connect(inputs[1].id, 'out', outer.id, 'pos'); inner.connect(inputs[0].id, 'out', outer.id, 'select'); inner.connect(outer.id, 'out', outputs[0].id, 'in');
+    }, (inputs, outputs) => minMaxCases(inputs, outputs, 'min'));
+    const maxGate = add('MAX — structural selector tree', { role: 'structural reference', equivalence: { directType: 'max' }, nodeCount: 12, depth: 6, primitiveCounts: { 'ternary-reference': 2, [select.type]: 2 }, rationale: 'First choose max(0,B): +1 for positive B and 0 otherwise. Then choose B, that middle result or +1 according to A. Both selector instances are the open pass/merge Select3 structure.', validation: 'Exhaustive 9/9 a,b cases saved.' }, ['a', 'b'], ['out'], (inner, inputs, outputs) => {
+      const zero = inner.addComponent('ternary-reference', -250, -130, { value: 0, label: 'Zero reference' });
+      const pos = inner.addComponent('ternary-reference', -250, 130, { value: 1, label: '+1 reference' });
+      const maxZeroB = inner.addComponent(select.type, 0, 70, { label: 'max(0, B)' });
+      const outer = inner.addComponent(select.type, 230, 0, { label: 'Select by A' });
+      inner.connect(zero.id, 'out', maxZeroB.id, 'neg'); inner.connect(zero.id, 'out', maxZeroB.id, 'zero'); inner.connect(pos.id, 'out', maxZeroB.id, 'pos'); inner.connect(inputs[1].id, 'out', maxZeroB.id, 'select');
+      inner.connect(inputs[1].id, 'out', outer.id, 'neg'); inner.connect(maxZeroB.id, 'out', outer.id, 'zero'); inner.connect(pos.id, 'out', outer.id, 'pos'); inner.connect(inputs[0].id, 'out', outer.id, 'select'); inner.connect(outer.id, 'out', outputs[0].id, 'in');
+    }, (inputs, outputs) => minMaxCases(inputs, outputs, 'max'));
+    const negateGate = add('Negate — structural level permutation', { role: 'structural reference', equivalence: { directType: 'negate' }, nodeCount: 8, depth: 3, primitiveCounts: { threshold3: 1, 'ternary-reference': 3, pass3: 3, merge3: 1 }, rationale: 'Decode the input into one-hot levels, then pass +1 for negative, 0 for zero and -1 for positive through Merge3.', validation: 'Exhaustive 3/3 input cases saved.' }, ['in'], ['out'], (inner, inputs, outputs) => {
+      const detector = inner.addComponent('threshold3', -180, 0, { label: 'Decode input' });
+      const neg = inner.addComponent('ternary-reference', -180, 135, { value: -1, label: '-1 reference' });
+      const zero = inner.addComponent('ternary-reference', -180, 205, { value: 0, label: 'Zero reference' });
+      const pos = inner.addComponent('ternary-reference', -180, 275, { value: 1, label: '+1 reference' });
+      const paths = ['neg', 'zero', 'pos'].map((name, index) => inner.addComponent('pass3', 40, (index - 1) * 75, { label: name + ' output path' }));
+      const merge = inner.addComponent('merge3', 230, 0, { label: 'Negated-level merge' });
+      inner.connect(inputs[0].id, 'out', detector.id, 'in');
+      inner.connect(pos.id, 'out', paths[0].id, 'in'); inner.connect(detector.id, 'neg', paths[0].id, 'gate');
+      inner.connect(zero.id, 'out', paths[1].id, 'in'); inner.connect(detector.id, 'zero', paths[1].id, 'gate');
+      inner.connect(neg.id, 'out', paths[2].id, 'in'); inner.connect(detector.id, 'pos', paths[2].id, 'gate');
+      paths.forEach((pass, index) => inner.connect(pass.id, 'out', merge.id, ['a', 'b', 'c'][index])); inner.connect(merge.id, 'out', outputs[0].id, 'in');
+    }, (inputs, outputs) => [-1, 0, 1].map((value) => ({ id: 'negate-' + value, name: 'in=' + fmt(value), inputs: { [inputs[0].id]: value }, expectedOutputs: { [outputs[0].id]: -value } })));
+    const compareGate = add('Compare — structural selector tree', { role: 'structural reference', equivalence: { directType: 'compare' }, nodeCount: 23, depth: 6, primitiveCounts: { 'ternary-reference': 3, [select.type]: 4 }, rationale: 'Three selectors encode the A=-1, A=0 and A=+1 rows of the 3×3 comparison table as functions of B. A fourth structural Select3 chooses the row using A.', validation: 'Exhaustive 9/9 a,b cases saved.' }, ['a', 'b'], ['out'], (inner, inputs, outputs) => {
+      const neg = inner.addComponent('ternary-reference', -300, -180, { value: -1, label: '-1 reference' });
+      const zero = inner.addComponent('ternary-reference', -300, 0, { value: 0, label: 'Zero reference' });
+      const pos = inner.addComponent('ternary-reference', -300, 180, { value: 1, label: '+1 reference' });
+      const rowNeg = inner.addComponent(select.type, -40, -160, { label: 'A = -1 row' });
+      const rowZero = inner.addComponent(select.type, -40, 0, { label: 'A = 0 row' });
+      const rowPos = inner.addComponent(select.type, -40, 160, { label: 'A = +1 row' });
+      const chooseRow = inner.addComponent(select.type, 230, 0, { label: 'Choose row by A' });
+      [[rowNeg, [zero, neg, neg]], [rowZero, [pos, zero, neg]], [rowPos, [pos, pos, zero]]].forEach(([row, values]) => { ['neg', 'zero', 'pos'].forEach((port, index) => inner.connect(values[index].id, 'out', row.id, port)); inner.connect(inputs[1].id, 'out', row.id, 'select'); });
+      inner.connect(rowNeg.id, 'out', chooseRow.id, 'neg'); inner.connect(rowZero.id, 'out', chooseRow.id, 'zero'); inner.connect(rowPos.id, 'out', chooseRow.id, 'pos'); inner.connect(inputs[0].id, 'out', chooseRow.id, 'select'); inner.connect(chooseRow.id, 'out', outputs[0].id, 'in');
+    }, (inputs, outputs) => { const cases = []; for (const a of [-1, 0, 1]) for (const b of [-1, 0, 1]) cases.push({ id: 'compare-' + a + '-' + b, name: 'a=' + fmt(a) + ', b=' + fmt(b), inputs: { [inputs[0].id]: a, [inputs[1].id]: b }, expectedOutputs: { [outputs[0].id]: a < b ? -1 : a > b ? 1 : 0 } }); return cases; });
+    const normalizeGate = add('Normalize / carry — structural decision tree', { role: 'structural reference', equivalence: { directType: 'normalize-carry' }, nodeCount: 133, depth: 9, primitiveCounts: { 'ternary-reference': 3, [select.type]: 26 }, rationale: 'For each output, nine C-selectors encode every A/B row, three B-selectors choose a row and one A-selector chooses the final row. Sum and carry use the same open structural Select3 primitive and explicit -1/0/+1 references.', validation: 'Exhaustive 27/27 a,b,c cases saved.' }, ['a', 'b', 'c'], ['sum', 'carry'], (inner, inputs, outputs) => {
+      const refs = new Map([-1, 0, 1].map((value, index) => [value, inner.addComponent('ternary-reference', -620, (index - 1) * 100, { value, label: fmt(value) + ' reference' })]));
+      const buildOutputTree = (name, output, yOffset) => {
+        const aRows = [];
+        for (const a of [-1, 0, 1]) {
+          const bRows = [];
+          for (const b of [-1, 0, 1]) {
+            const byC = inner.addComponent(select.type, -340, yOffset + (a + 1) * 260 + (b + 1) * 75, { label: name + ': A=' + fmt(a) + ', B=' + fmt(b) });
+            for (const c of [-1, 0, 1]) {
+              const raw = a + b + c;
+              const carry = raw <= -2 ? -1 : raw >= 2 ? 1 : 0;
+              const value = name === 'sum' ? raw - 3 * carry : carry;
+              inner.connect(refs.get(value).id, 'out', byC.id, c < 0 ? 'neg' : c > 0 ? 'pos' : 'zero');
+            }
+            inner.connect(inputs[2].id, 'out', byC.id, 'select');
+            bRows.push(byC);
+          }
+          const byB = inner.addComponent(select.type, 0, yOffset + (a + 1) * 260, { label: name + ': choose B row for A=' + fmt(a) });
+          ['neg', 'zero', 'pos'].forEach((port, index) => inner.connect(bRows[index].id, 'out', byB.id, port)); inner.connect(inputs[1].id, 'out', byB.id, 'select');
+          aRows.push(byB);
+        }
+        const byA = inner.addComponent(select.type, 250, yOffset + 260, { label: name + ': choose A row' });
+        ['neg', 'zero', 'pos'].forEach((port, index) => inner.connect(aRows[index].id, 'out', byA.id, port)); inner.connect(inputs[0].id, 'out', byA.id, 'select'); inner.connect(byA.id, 'out', output.id, 'in');
+      };
+      buildOutputTree('sum', outputs[0], -520); buildOutputTree('carry', outputs[1], 400);
+    }, (inputs, outputs) => { const cases = []; for (const a of [-1, 0, 1]) for (const b of [-1, 0, 1]) for (const c of [-1, 0, 1]) { const raw = a + b + c; const carry = raw <= -2 ? -1 : raw >= 2 ? 1 : 0; cases.push({ id: 'normalize-' + a + '-' + b + '-' + c, name: 'a=' + fmt(a) + ', b=' + fmt(b) + ', c=' + fmt(c), inputs: { [inputs[0].id]: a, [inputs[1].id]: b, [inputs[2].id]: c }, expectedOutputs: { [outputs[0].id]: raw - 3 * carry, [outputs[1].id]: carry } }); } return cases; });
+    rootCircuit.clear(); [control, select, route, andGate, orGate, minGate, maxGate, negateGate, compareGate, normalizeGate].forEach((meta, index) => rootCircuit.addComponent(meta.type, -1485 + index * 330, 0, { label: meta.label }));
+    renderer.select(null); renderLibrary(); updateStats(); resetHistory();
+    setStatus('Structural routing lab loaded. Each component has saved exhaustive known-trit cases; open it to inspect detector, pass, Merge3, zero-reference and control-inverter cells.');
   }
 
   function buildCompareDemo() {

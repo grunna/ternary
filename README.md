@@ -184,7 +184,8 @@ Signal states are distinct: `-1`, `0` and `+1` are driven logic levels; `?` mean
 
 Choose **Structural latch / register** to compare behavioral reference blocks with their opening structural versions. Select **Register — two structural latches**, choose **Open internals**, then open either latch to reach its restorer, pass switch and storage node. The shared input controls drive both versions, so their probes can be compared directly. The Inspector gives the same comparison dimensions for every option: nodes, depth, wires and canonical write transitions.
 
-Choose **Ternary device cells** to explore the new lower abstraction layer. **Ternary restorer**, **Ternary level detector**, **Ternary pass switch** and **Ternary storage node** are ideal structural cells: they define level restoration, detection, gated transmission and retention without choosing a transistor technology. A disabled pass switch emits `Z`; this is distinct from an unresolved `?`.
+Choose **Ternary device cells** to explore the new lower abstraction layer. **Ternary restorer**, **Ternary level detector**, **Ternary pass switch**, **Ternary resolved merge** and **Ternary storage node** are ideal structural cells: they define level restoration, detection, gated transmission, explicit bus merging and retention without choosing a transistor technology. A disabled pass switch emits `Z`; this is distinct from an unresolved `?`. `Merge3` joins three mutually exclusive pass paths: one active driven path is valid, all floating paths remain `Z`, and contention or uncertainty becomes `?`.
+A **Ternary reference rail** supplies an explicit fixed `-1`, `0` or `+1` level when a structural circuit needs one; it prevents hidden JavaScript constants from becoming part of circuit behavior.
 
 ## 7-segment output
 

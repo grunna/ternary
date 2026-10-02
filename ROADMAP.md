@@ -197,13 +197,18 @@ A component must never become a magic shortcut: every high-level behavior needs 
 
 ### Phase 14A.2 — Missing structural links
 
-- [ ] Define a structural resolved-output/merge cell for mutually exclusive ternary pass paths
-- [ ] Build and validate cell-level structural circuits for Control3, Route3 and Select3
-- [ ] Build and validate cell-level structural circuits for Negate, MIN, MAX, Compare and Normalize / carry
+- [x] Define and test `Merge3`, a structural resolved-output cell for mutually exclusive ternary pass paths
+- [x] Build structural 0/+1 control AND/OR utilities from reference rails, control inversion, Pass3 and Merge3
+- [x] Build structural Control3, Route3 and Select3 from detector, Pass3, Merge3, references and control inversion
+- [x] Build structural MIN/MAX selector trees from two opening Select3 components and explicit reference rails
+- [x] Build structural Negate as a detector/reference/pass/merge level permutation
+- [x] Build structural Compare as a four-Select3 decision tree covering its 3×3 contract
+- [x] Build structural Normalize / carry as two exhaustive three-level Select3 decision trees (sum and carry)
 - [ ] Record any still-missing fundamental cell before allowing a higher-level accelerator to depend on it
 
 ### Phase 14A.3 — Equivalence verification
 
+- [x] Add a Compare direct runner that executes saved vectors against a structural component and its named direct reference
 - [ ] Run common combinational vectors against structural and accelerated forms
 - [ ] Run common clock/reset/write sequences against structural and accelerated stateful forms
 - [ ] Report an equivalence failure as a component regression failure
