@@ -348,6 +348,13 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .primitive-group h3 { margin: 0 0 6px; color: var(--muted); font-size: 11px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
 .primitive-group-list { gap: 6px; }
 .component-button .candidate-badge { display: inline-block; margin-left: 6px; font-size: 9px; font-weight: 700; color: var(--accent); }
+.implementation-panel { margin-top: 10px; border: 1px solid #3a5c72; border-radius: 8px; padding: 8px; background: rgba(59, 115, 148, .09); color: var(--muted); font-size: 11px; line-height: 1.45; }
+.implementation-panel summary { cursor: pointer; color: #d5eaff; font-weight: 700; }
+.implementation-panel p { margin: 7px 0 0; }
+.implementation-panel ol { margin: 5px 0 0; padding-left: 19px; }
+.implementation-status strong { color: #9bd1ff; text-transform: capitalize; }
+.implementation-label { color: #d5eaff; font-weight: 700; }
+.implementation-reference { color: #b9e4d3; }
 .cost-note { margin-top: 10px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; font-size: 11px; color: var(--muted); }
 
 /* Project persistence controls */

@@ -293,6 +293,23 @@
     return `${label} (${endpoint.componentId}).${endpoint.port}`;
   }
 
+  function structuralImplementationPanel(def) {
+    const info = def.implementation || {
+      mode: def.custom ? 'structural reusable component' : 'unclassified',
+      status: def.custom ? 'inspectable' : 'needs classification',
+      summary: def.custom ? 'Open this reusable component to inspect its circuit.' : 'This component has not yet been classified against the structural-equivalence rule.',
+      layers: def.custom ? ['Open internals → nested components and primitives'] : [],
+    };
+    const layers = (info.layers || []).map((layer) => '<li>' + esc(layer) + '</li>').join('');
+    return '<details class="implementation-panel" open>' +
+      '<summary>Implementation: ' + esc(info.mode) + '</summary>' +
+      '<p class="implementation-status">Status: <strong>' + esc(info.status) + '</strong></p>' +
+      '<p>' + esc(info.summary) + '</p>' +
+      (layers ? '<p class="implementation-label">Structural path</p><ol>' + layers + '</ol>' : '') +
+      (info.reference ? '<p class="implementation-reference">' + esc(info.reference) + '</p>' : '') +
+      '</details>';
+  }
+
   function updateInspector(selection) {
     deleteBtn.disabled = !selection;
     const componentSelection = selection && (selection.kind === 'component' || selection.kind === 'components');
@@ -387,6 +404,7 @@
     }
 
     const logicalCost = def.cost?.logical || {};
+    extra += structuralImplementationPanel(def);
     extra += `<div class="cost-note"><strong>Structural metadata</strong><br>Logical: ${Number(logicalCost.nodes) || 0} node unit · ${Number(logicalCost.depth) || 0} depth unit</div>`;
 
     extra += `<details class="layout-editor">

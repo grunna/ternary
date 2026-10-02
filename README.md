@@ -6,6 +6,10 @@
 
 A static balanced-ternary circuit simulator built with plain JavaScript and PixiJS. No TypeScript, npm, bundler or backend is required.
 
+## Architecture promise
+
+Ternary Lab may use fast simulator implementations, but they must never be opaque magic blocks. Every high-level component is intended to have an inspectable structural construction from lower-level ternary parts, ending at the project’s technology-neutral cell boundary. Optimized execution is only an accelerator for that same behavior and must be verified against its structural version. The simulator stops above actual transistor and voltage modeling; “physically viable” means structurally realizable in principle, ready for a later technology mapping. Read the evolving policy in [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ## Run
 
 Just open the index.html in a web browser

@@ -2,6 +2,12 @@
 
 This document records architectural and structural decisions for the sequential components and CPU datapath. The project deliberately stops above transistor- and voltage-level modeling.
 
+## Structural equivalence rule
+
+Every non-primitive component must remain explainable as an open, lower-level ternary circuit down to the technology-neutral cell boundary. A faster native simulator implementation is allowed only as an **accelerated, structurally equivalent** execution path: it must retain the same interface, logical behavior and sequential/clock semantics as a named structural definition, and both forms must share verification vectors where practical. An accelerator is never a new logical primitive.
+
+This is the project’s definition of physically viable: the logic is structurally realizable in principle and can later be mapped to a concrete ternary technology. Ternary Lab still intentionally does not model transistors, voltages, current, power, noise margins or physical timing. If a desired component cannot eventually be constructed from the available lower-level cells, we add and document a necessary fundamental cell first—or reject the component as a magic shortcut. The full evolving policy is in [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ## Component decisions
 
 | Component | Contract / role | Decision and rationale |

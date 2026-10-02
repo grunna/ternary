@@ -183,6 +183,32 @@ The simulator stops at idealized structural cells. It does not model transistors
 - [x] Build an opening structural register from latch/cell components
 - [x] Compare structural alternatives by nodes, depth, wires and transitions
 
+## Phase 14A — Structural equivalence and accelerated execution
+
+A component must never become a magic shortcut: every high-level behavior needs an inspectable path to the ideal ternary cell boundary. Native execution is permitted only as an accelerator for that structural behavior, never as a new logical primitive. See [ARCHITECTURE.md](ARCHITECTURE.md).
+
+### Phase 14A.1 — Classification and visibility
+
+- [x] Show each built-in component’s execution role, structural status and known lower-level path in Inspector
+- [x] Document the initial accelerated-component inventory and distinguish cell boundaries from external adapters
+- [ ] Classify every reusable/system component as structural, accelerated-equivalent or external adapter
+- [ ] Store a named structural implementation reference alongside every accelerated component
+- [ ] Let an accelerated component open its structural implementation directly in the editor
+
+### Phase 14A.2 — Missing structural links
+
+- [ ] Define a structural resolved-output/merge cell for mutually exclusive ternary pass paths
+- [ ] Build and validate cell-level structural circuits for Control3, Route3 and Select3
+- [ ] Build and validate cell-level structural circuits for Negate, MIN, MAX, Compare and Normalize / carry
+- [ ] Record any still-missing fundamental cell before allowing a higher-level accelerator to depend on it
+
+### Phase 14A.3 — Equivalence verification
+
+- [ ] Run common combinational vectors against structural and accelerated forms
+- [ ] Run common clock/reset/write sequences against structural and accelerated stateful forms
+- [ ] Report an equivalence failure as a component regression failure
+- [ ] Compare structural and accelerated forms by nodes, depth, wires, transitions and execution cost
+
 ## Phase 15 — Sequential ternary logic
 - [x] Clock / sequence source model
 - [x] Ternary latch experiments
@@ -203,31 +229,94 @@ The simulator stops at idealized structural cells. It does not model transistors
 - [x] Record the two-state segment-control boundary
 - [x] Decide how a multi-trit value is shown natively: one visible `− / 0 / +` glyph per trit, most-significant first
 - [x] Defer balanced-ternary → decimal conversion until multi-trit arithmetic exists; treat it as an optional debugger/peripheral adapter
+- [ ] Build the three-decimal-position `−364 … +364` peripheral only after its ternary word converter has a structural implementation
 
 ## Component sharing and demo projects
 - [x] Separate reusable component library from demo-project intent
 - [x] Export a reusable component with nested dependencies and saved tests
 - [x] Import component packages with fresh ids and recursion validation
 
-## Phase 16B — CPU building blocks
+## Phase 16B — Six-trit datapath building blocks
+
+This phase ends with tested, reusable word-level operations. It deliberately does not assemble a CPU or memory yet.
+
+### Phase 16B.1 — Word representation and arithmetic
+
 - [x] Fix the first CPU word width at 6 balanced trits (`−364 … +364`)
 - [x] Build an opening reusable 6-trit word component
 - [x] Validate all 729 six-trit words at the word boundary
-- [ ] Use three decimal display positions for the future `−364 … +364` peripheral
 - [x] Native ternary adder — opening 6-trit Normalize / carry ripple chain
 - [x] Negation/subtraction strategy — reusable 6-trit negator feeding 6-trit ripple subtraction
-- [ ] Comparator
-- [ ] Selector/router network
-- [ ] ALU only after primitive/operation experiments justify its shape
-- [ ] Register bank
-- [ ] Program-counter strategy
-- [ ] Instruction representation
-- [ ] Control architecture
-- [ ] Memory interface
-- [ ] Branching
-- [ ] Minimal runnable ternary CPU
+- [ ] Define and test word carry/borrow and out-of-range-result policy
+- [ ] Build a 6-trit comparator from proven lower-level comparison blocks
+- [ ] Define word equality, less-than and greater-than outputs for CPU/control use
 
-## Phase 17 — CPU debugging
+### Phase 16B.2 — Word routing and ALU experiments
+
+- [ ] Build a 6-trit `Select3` word selector with one shared select trit
+- [ ] Build a 6-trit router/read-path network with explicit inactive-path behavior
+- [ ] Define a compact ternary ALU-operation control contract
+- [ ] Compare candidate ALU operations and structures before fixing the first ALU shape
+- [ ] Build an opening structural 6-trit ALU only after its operations, control and equivalence paths are justified
+- [ ] Validate every chosen word operation with saved vectors, boundary values and unknown/floating behavior
+
+## Phase 17 — Structural ternary memory
+
+Memory is completed before CPU integration. It must be a reusable, inspectable subsystem with a stable word-level contract.
+
+### Phase 17A — One-trit memory fabric
+
+- [ ] Define the memory-port contract: balanced address, data-in, data-out, read/idle/write action, clock and reset
+- [ ] Decide and document read latency, write edge, reset behavior and invalid/unknown-address behavior
+- [ ] Build `Memory 3×1` structurally: ternary address decode, write selection, three structural registers and Select3 read path
+- [ ] Make every internal decoder, selector and register openable from the memory component
+- [ ] Test all addresses and read/idle/write actions across clock/reset sequences
+- [ ] Verify that an idle or invalid access cannot alter stored values
+
+### Phase 17B — Six-trit word memory
+
+- [ ] Build `Memory 3×6` from six aligned Memory 3×1 lanes
+- [ ] Guarantee one clock-edge write updates one complete 6-trit word, never a mixture of old and new trits
+- [ ] Validate all 729 data words at each of the three addresses through the public memory interface
+- [ ] Add word-level read probes and a native balanced-ternary word display for inspection
+- [ ] Package the structural memory as a reusable component with saved regression and sequence tests
+
+### Phase 17C — Scaled and accelerated memory
+
+- [ ] Compose structural `9×6`, `27×6` and larger memories from the proven smaller references
+- [ ] Define balanced multi-trit addressing and address-decode hierarchy for each capacity
+- [ ] Measure nodes, depth, wires, transitions and simulator execution cost at each size
+- [ ] Define initialization/loading and reset policy without bypassing the public memory contract
+- [ ] Build a fast RAM implementation only after its named structural reference exists
+- [ ] Run the same read/write/reset sequence suite against structural memory and fast RAM
+- [ ] Let fast RAM open its structural reference and report equivalence failures as regressions
+
+## Phase 18 — First ternary computer
+
+### Phase 18A — Datapath and state
+
+- [ ] Build a 6-trit register bank from the proven register/memory conventions
+- [ ] Build program-counter storage and an `Adjust3` increment/hold/decrement path
+- [ ] Connect the selected 6-trit ALU, register read paths and write-back selector
+- [ ] Define CPU reset state and clocked state-transition order
+
+### Phase 18B — Instructions, control and memory integration
+
+- [ ] Fix a 6-trit instruction representation and field layout
+- [ ] Define the smallest instruction set that exercises arithmetic, register movement, memory and branching
+- [ ] Build an inspectable ternary control architecture from instruction decode to packed control trits
+- [ ] Connect the CPU to the Phase 17 memory-port contract for instruction fetch and data access
+- [ ] Define load/store sequencing and memory-read latency handling
+- [ ] Implement conditional and unconditional branching using proven comparator outputs and PC control
+
+### Phase 18C — Minimal runnable machine
+
+- [ ] Load a small ternary program into the public memory interface
+- [ ] Run arithmetic, memory and branch programs end-to-end
+- [ ] Verify each instruction by its register, PC and memory state transitions
+- [ ] Keep every CPU subsystem drillable down to its structural reference or documented cell boundary
+
+## Phase 19 — CPU debugging
 - [ ] Load a small ternary program
 - [ ] Instruction step
 - [ ] Clock step
@@ -238,7 +327,6 @@ The simulator stops at idealized structural cells. It does not model transistors
 - [ ] Probes
 - [ ] Waveform/timeline
 - [ ] Drill from CPU to primitive implementation while debugging
-
 
 ## v9 additions
 
