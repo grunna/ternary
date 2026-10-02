@@ -7,6 +7,9 @@
 
   const storage = new ProjectStorage();
   const customComponents = new Map();
+  // A stable reference name maps to the project-local custom definition that
+  // currently realizes it. IDs are regenerated when a project is loaded.
+  const structuralReferences = new Map();
   const navigation = [];
   let rootCircuit = new Circuit(registry);
   let current = { kind: 'root', label: 'Project', circuit: rootCircuit, customId: null };
@@ -295,7 +298,7 @@
 
   function structuralImplementationPanel(def) {
     const info = def.implementation || {
-      mode: def.custom ? 'structural reusable component' : 'unclassified',
+      mode: def.custom ? 'structural' : 'unclassified',
       status: def.custom ? 'inspectable' : 'needs classification',
       summary: def.custom ? 'Open this reusable component to inspect its circuit.' : 'This component has not yet been classified against the structural-equivalence rule.',
       layers: def.custom ? ['Open internals → nested components and primitives'] : [],
@@ -307,6 +310,7 @@
       '<p>' + esc(info.summary) + '</p>' +
       (layers ? '<p class="implementation-label">Structural path</p><ol>' + layers + '</ol>' : '') +
       (info.reference ? '<p class="implementation-reference">' + esc(info.reference) + '</p>' : '') +
+      (info.structuralImplementation ? '<div class="selection-actions"><button id="openStructuralImplementationBtn" class="primary-action" type="button">Open structural implementation</button></div>' : '') +
       '</details>';
   }
 
@@ -424,7 +428,11 @@
         const primitives = Object.entries(experiment.primitiveCounts || {}).map(([type, count]) => `${registry.get(type)?.label || type} ×${count}`).join(', ');
         const metrics = experiment.metrics;
         const metricLine = metrics ? `<br><strong>Structural comparison</strong><br>${metrics.nodes} nodes · depth ${metrics.depth} · ${metrics.wires} wires · ${metrics.transitions} transitions (${esc(metrics.transitionScenario || 'canonical scenario')})` : '';
-        extra += `<div class="cost-note"><strong>Experiment details</strong><br>${esc(experiment.role || 'candidate')} · ${experiment.nodeCount} primitive nodes · critical depth ${experiment.depth}${metricLine}<br>Primitive set: ${esc(primitives)}<br>${esc(experiment.rationale)}<br>${experiment.setName ? `<br>Experiment set: ${esc(experiment.setName)}` : ''}<br>Validation: ${esc(experiment.validation || 'not recorded')}</div>`;
+        const verification = experiment.equivalence?.lastRun;
+        const comparison = verification?.comparison;
+        const comparisonLine = comparison ? `<br><strong>Native ↔ structural</strong><br>nodes ${comparison.native.nodes} ↔ ${comparison.structural.nodes} · depth ${comparison.native.depth} ↔ ${comparison.structural.depth}<br>wires ${comparison.native.wires} ↔ ${comparison.structural.wires} · transitions ${comparison.native.transitions} ↔ ${comparison.structural.transitions}<br>execution ${comparison.native.executionCost} ↔ ${comparison.structural.executionCost} evaluations` : '';
+        const verificationLine = verification ? `<br><strong>Equivalence run</strong><br>${verification.vectors.passed}/${verification.vectors.total} vectors · ${verification.sequences.passed}/${verification.sequences.total} sequences${comparisonLine}${verification.failures.length ? `<br><span class="error">Regression: ${esc(verification.failures[0])}</span>` : ''}` : '';
+        extra += `<div class="cost-note"><strong>Experiment details</strong><br>${esc(experiment.role || 'candidate')} · ${experiment.nodeCount} primitive nodes · critical depth ${experiment.depth}${metricLine}<br>Primitive set: ${esc(primitives)}<br>${esc(experiment.rationale)}<br>${experiment.setName ? `<br>Experiment set: ${esc(experiment.setName)}` : ''}<br>Validation: ${esc(experiment.validation || 'not recorded')}${verificationLine}</div>`;
       }
       extra += `<div class="selection-actions"><button id="openComponentBtn" class="primary-action" type="button">Open internals</button></div>`;
     }
@@ -509,6 +517,7 @@
 
     $('inspectorDeleteBtn').addEventListener('click', () => renderer.deleteSelection());
     if (def.custom) $('openComponentBtn').addEventListener('click', () => openCustomComponent(def.type));
+    if (def.implementation?.structuralImplementation) $('openStructuralImplementationBtn').addEventListener('click', () => openStructuralImplementation(def.implementation.structuralImplementation));
     if (def.boundary === 'input' || def.boundary === 'output') $('renameBoundaryBtn').addEventListener('click', () => {
       const requestedName = $('boundaryName').value.trim();
       if (!requestedName) return setStatus('Port name cannot be empty.', true);
@@ -613,6 +622,96 @@
     return Object.fromEntries(definition.outputs.map((name) => [name, trit(target.outputs[name])]));
   }
 
+  function evaluateComponentSequence(type, steps) {
+    const definition = registry.get(type);
+    const isolated = new Circuit(registry);
+    const inputs = new Map();
+    for (const name of definition.inputs) inputs.set(name, isolated.addComponent('trit-input', -160, 0, { value: 0 }));
+    const target = isolated.addComponent(type, 0, 0);
+    for (const [name, input] of inputs) isolated.connect(input.id, 'out', target.id, name);
+    return steps.map((step) => {
+      for (const [name, input] of inputs) {
+        if (!(name in step.inputs)) throw new Error(`sequence step is missing input “${name}”`);
+        isolated.setState(input.id, { value: trit(step.inputs[name]) });
+      }
+      isolated.simulate();
+      return Object.fromEntries(definition.outputs.map((name) => [name, trit(target.outputs[name])]));
+    });
+  }
+
+  function measureComponentExecution(type, steps) {
+    const definition = registry.get(type);
+    const isolated = new Circuit(registry);
+    const inputs = new Map();
+    for (const name of definition.inputs) inputs.set(name, isolated.addComponent('trit-input', -160, 0, { value: 0 }));
+    const target = isolated.addComponent(type, 0, 0);
+    for (const [name, input] of inputs) isolated.connect(input.id, 'out', target.id, name);
+    let evaluations = 0;
+    let signalChanges = 0;
+    for (const step of steps) {
+      for (const [name, input] of inputs) isolated.setState(input.id, { value: trit(step.inputs[name]) });
+      isolated.simulate();
+      const cost = target.state.executionCost || { evaluations: 1, signalChanges: 0 };
+      evaluations += Number(cost.evaluations) || 1;
+      signalChanges += Number(cost.signalChanges) || 0;
+    }
+    return { evaluations, signalChanges };
+  }
+
+  function verifyStructuralReference(meta) {
+    const equivalence = meta?.experiment?.equivalence;
+    if (!equivalence?.directType) return null;
+    const boundary = boundaryPorts(meta.circuit);
+    const inputById = new Map(boundary.inputs.map((port) => [port.componentId, port.name]));
+    const outputNames = boundary.outputs.map((port) => port.name);
+    const cases = testSuites.find((entry) => entry.componentId === meta.id)?.cases || [];
+    let vectorsPassed = 0;
+    let sequencesPassed = 0;
+    const execution = { structural: { evaluations: 0, signalChanges: 0 }, direct: { evaluations: 0, signalChanges: 0 } };
+    const failures = [];
+    for (const testCase of cases) {
+      try {
+        const values = {};
+        for (const [id, name] of inputById) values[name] = trit(testCase.inputs?.[id]);
+        const structural = evaluateComponentType(meta.type, values);
+        const direct = evaluateComponentType(equivalence.directType, values);
+        const step = { inputs: values };
+        const structuralCost = measureComponentExecution(meta.type, [step]);
+        const directCost = measureComponentExecution(equivalence.directType, [step]);
+        execution.structural.evaluations += structuralCost.evaluations; execution.structural.signalChanges += structuralCost.signalChanges;
+        execution.direct.evaluations += directCost.evaluations; execution.direct.signalChanges += directCost.signalChanges;
+        const mismatch = outputNames.find((name) => structural[name] !== direct[name]);
+        if (mismatch) failures.push(`${testCase.name || 'vector'}: ${mismatch} structural ${fmt(structural[mismatch])}, direct ${fmt(direct[mismatch])}`);
+        else vectorsPassed += 1;
+      } catch (error) { failures.push(`${testCase.name || 'vector'}: ${error.message}`); }
+    }
+    for (const sequence of equivalence.sequences || []) {
+      try {
+        const structural = evaluateComponentSequence(meta.type, sequence.steps);
+        const direct = evaluateComponentSequence(equivalence.directType, sequence.steps);
+        const structuralCost = measureComponentExecution(meta.type, sequence.steps);
+        const directCost = measureComponentExecution(equivalence.directType, sequence.steps);
+        execution.structural.evaluations += structuralCost.evaluations; execution.structural.signalChanges += structuralCost.signalChanges;
+        execution.direct.evaluations += directCost.evaluations; execution.direct.signalChanges += directCost.signalChanges;
+        const index = structural.findIndex((outputs, step) => outputNames.some((name) => outputs[name] !== direct[step][name]));
+        if (index >= 0) failures.push(`${sequence.name || 'sequence'}: regression at step ${index + 1}`);
+        else sequencesPassed += 1;
+      } catch (error) { failures.push(`${sequence.name || 'sequence'}: ${error.message}`); }
+    }
+    const structuralMetrics = meta.experiment.metrics || { nodes: meta.experiment.nodeCount, depth: meta.experiment.depth, wires: (meta.circuit.wires || []).length, transitions: 0, transitionScenario: 'equivalence suite' };
+    structuralMetrics.transitions = execution.structural.signalChanges;
+    structuralMetrics.executionCost = execution.structural.evaluations;
+    meta.experiment.metrics = structuralMetrics;
+    equivalence.lastRun = {
+      vectors: { passed: vectorsPassed, total: cases.length }, sequences: { passed: sequencesPassed, total: (equivalence.sequences || []).length }, execution, failures,
+      comparison: {
+        native: { nodes: registry.get(equivalence.directType).cost?.logical?.nodes || 1, depth: registry.get(equivalence.directType).cost?.logical?.depth || 1, wires: registry.get(equivalence.directType).inputs.length + registry.get(equivalence.directType).outputs.length, transitions: execution.direct.signalChanges, executionCost: execution.direct.evaluations },
+        structural: { nodes: structuralMetrics.nodes, depth: structuralMetrics.depth, wires: structuralMetrics.wires, transitions: structuralMetrics.transitions, executionCost: structuralMetrics.executionCost },
+      },
+    };
+    return equivalence.lastRun;
+  }
+
   function runDirectEquivalenceTests(meta) {
     const directType = meta?.experiment?.equivalence?.directType;
     if (!directType) return;
@@ -647,7 +746,38 @@
       list.appendChild(row);
     }
     renderTestResults('Direct equivalence: ' + (suite.cases.length - failures) + '/' + suite.cases.length + ' passed', list, failures ? 'has-failures' : 'all-passed');
-    setStatus(failures ? failures + ' direct-equivalence case' + (failures === 1 ? '' : 's') + ' failed.' : 'Structural and direct implementations are equivalent for all ' + suite.cases.length + ' saved cases.', Boolean(failures));
+    setStatus(failures ? failures + ' component regression' + (failures === 1 ? '' : 's') + ' failed during direct equivalence.' : 'Structural and direct implementations are equivalent for all ' + suite.cases.length + ' saved cases.', Boolean(failures));
+  }
+
+  function runSequenceEquivalenceTests(meta) {
+    const directType = meta?.experiment?.equivalence?.directType;
+    const sequences = meta?.experiment?.equivalence?.sequences || [];
+    if (!directType || !sequences.length) return;
+    const outputNames = boundaryPorts(meta.circuit).outputs.map((port) => port.name);
+    const list = document.createElement('div');
+    list.className = 'component-test-run-list';
+    let failures = 0;
+    for (const sequence of sequences) {
+      const row = document.createElement('div');
+      row.className = 'component-test-run';
+      try {
+        const structural = evaluateComponentSequence(meta.type, sequence.steps);
+        const direct = evaluateComponentSequence(directType, sequence.steps);
+        const mismatch = structural.findIndex((outputs, index) => outputNames.some((name) => outputs[name] !== direct[index][name]));
+        if (mismatch >= 0) {
+          failures += 1; row.classList.add('failed');
+          const names = outputNames.filter((name) => structural[mismatch][name] !== direct[mismatch][name]);
+          row.textContent = `${sequence.name || 'Unnamed sequence'} — regression at step ${mismatch + 1}: ${names.map((name) => `${name} structural ${fmt(structural[mismatch][name])}, direct ${fmt(direct[mismatch][name])}`).join('; ')}`;
+        } else {
+          row.classList.add('passed'); row.textContent = `${sequence.name || 'Unnamed sequence'} — equivalent (${sequence.steps.length} steps)`;
+        }
+      } catch (error) {
+        failures += 1; row.classList.add('failed'); row.textContent = `${sequence.name || 'Unnamed sequence'} — could not compare: ${error.message}`;
+      }
+      list.appendChild(row);
+    }
+    renderTestResults(`Sequence equivalence: ${sequences.length - failures}/${sequences.length} passed`, list, failures ? 'has-failures' : 'all-passed');
+    setStatus(failures ? `${failures} sequence-equivalence regression${failures === 1 ? '' : 's'} failed.` : `Structural and direct sequences are equivalent for all ${sequences.length} saved sequences.`, Boolean(failures));
   }
 
   function renderTestResults(title, content, modifier = '') {
@@ -701,14 +831,21 @@
     exhaustive.addEventListener('click', () => runExhaustiveTruthTable(boundaries));
     const meta = customComponents.get(current.customId);
     const directType = meta?.experiment?.equivalence?.directType;
+    controls.append(name, save, runSaved, exhaustive);
     if (directType) {
       const compare = document.createElement('button');
       compare.type = 'button'; compare.textContent = 'Compare direct'; compare.disabled = !suite?.cases.length;
       compare.title = 'Run the saved cases against this structural component and ' + (registry.get(directType)?.label || directType) + '.';
       compare.addEventListener('click', () => runDirectEquivalenceTests(meta));
       controls.append(compare);
+      if (meta?.experiment?.equivalence?.sequences?.length) {
+        const compareSequences = document.createElement('button');
+        compareSequences.type = 'button'; compareSequences.textContent = 'Compare sequences';
+        compareSequences.title = 'Run saved state/clock sequences against this structural component and its direct reference.';
+        compareSequences.addEventListener('click', () => runSequenceEquivalenceTests(meta));
+        controls.append(compareSequences);
+      }
     }
-    controls.append(name, save, runSaved, exhaustive);
     group.appendChild(controls);
 
     if (!suite?.cases.length) {
@@ -852,6 +989,8 @@
     componentTestSection.hidden = current.kind !== 'custom';
     componentTestPanel.innerHTML = '';
     if (current.kind !== 'custom') return;
+    const heading = componentTestSection.querySelector('h2');
+    if (heading) heading.textContent = `Component test — ${current.label}`;
     if (componentTestDraftComponentId !== current.customId) {
       componentTestDraftComponentId = current.customId;
       componentTestDraftExpected = {};
@@ -1399,6 +1538,20 @@
     setStatus(`Opened ${meta.label}. You can open nested reusable components from the Inspector.`);
   }
 
+  function openStructuralImplementation(reference) {
+    let meta = structuralReferences.get(reference);
+    if (!meta || !customComponents.has(meta.id)) {
+      const references = reference === 'structural-register-bank3-v1'
+        ? buildStructuralRegisterBankDemo(false)
+        : reference.startsWith('structural-latch') || reference.startsWith('structural-register')
+          ? buildStructuralStorageDemo(false)
+          : buildStructuralRoutingDemo(false);
+      meta = references?.[reference];
+    }
+    if (!meta) return setStatus('The named structural implementation is not available.', true);
+    openCustomComponent(meta.type);
+  }
+
   function goBack() {
     if (!navigation.length) return;
     if (!saveCurrentCustomDefinition()) return;
@@ -1552,6 +1705,7 @@
   function clearCustomRegistry() {
     for (const meta of customComponents.values()) registry.remove(meta.type);
     customComponents.clear();
+    structuralReferences.clear();
   }
 
   function resetProjectSessionState() {
@@ -2458,7 +2612,7 @@
     setStatus(`3-trit display decoder loaded (${nodeCount} gate nodes). Change the 9s, 3s and 1s trits; it displays -9…+9 and blanks the remaining eight codes. Open internals to inspect the gate network.`);
   }
 
-  function buildStructuralStorageDemo() {
+  function buildStructuralStorageDemo(loadDemo = true) {
     // These are real custom components: select one in the root circuit and use
     // “Open internals” to descend from register → latch → device cells.
     const add = (labelBase, experiment, inputNames, outputNames, wire) => {
@@ -2473,6 +2627,19 @@
       return meta;
     };
     const metric = (nodes, depth, wires, transitions) => ({ nodes, depth, wires, transitions, transitionScenario: 'one known data write from a settled idle state' });
+    const latchSequences = [{ name: 'reset, write, hold', steps: [
+      { inputs: { d: 1, enable: 0, reset: 1 } },
+      { inputs: { d: -1, enable: 1, reset: 0 } },
+      { inputs: { d: 1, enable: 0, reset: 0 } },
+    ] }];
+    const registerSequences = [{ name: 'reset and rising-edge write', steps: [
+      { inputs: { d: 1, load: 0, clock: 0, reset: 1 } },
+      { inputs: { d: 1, load: 0, clock: 1, reset: 1 } },
+      { inputs: { d: -1, load: 1, clock: 0, reset: 0 } },
+      { inputs: { d: -1, load: 1, clock: 1, reset: 0 } },
+      { inputs: { d: 1, load: 0, clock: 0, reset: 0 } },
+      { inputs: { d: 1, load: 0, clock: 1, reset: 0 } },
+    ] }];
     const directLatch = add('Latch — functional reference', {
       role: 'reference', nodeCount: 1, depth: 1, primitiveCounts: { latch3: 1 }, metrics: metric(1, 1, 4, 2),
       rationale: 'The existing latch is the compact behavioral reference: D is visible while enable is +1 and retained otherwise.', validation: 'Manual contract: transparent at enable +1; holds at 0/-1; reset restores 0.',
@@ -2482,7 +2649,7 @@
       inner.connect(latch.id, 'q', outputs[0].id, 'in');
     });
     const structuralLatch = add('Latch — structural pass cell', {
-      role: 'structural candidate', nodeCount: 4, depth: 4, primitiveCounts: { restore3: 2, pass3: 1, 'storage-node3': 1 }, metrics: metric(4, 4, 8, 5),
+      role: 'structural candidate', equivalence: { directType: 'latch3', sequences: latchSequences }, nodeCount: 4, depth: 4, primitiveCounts: { restore3: 2, pass3: 1, 'storage-node3': 1 }, metrics: metric(4, 4, 8, 5),
       rationale: 'Restores D, passes it only while enable is +1, then commits it in an explicit storage node before a final restored Q.', validation: 'Manual contract matches the functional latch for known D/enable/reset values.',
     }, ['d', 'enable', 'reset'], ['q'], (inner, inputs, outputs) => {
       const inputRestorer = inner.addComponent('restore3', -150, -20, { label: 'Restore D' });
@@ -2503,19 +2670,28 @@
       inner.connect(register.id, 'q', outputs[0].id, 'in');
     });
     const structuralRegister = add('Register — two structural latches', {
-      role: 'structural candidate', nodeCount: 10, depth: 8, primitiveCounts: { 'clock-phase3': 1, min: 1, restore3: 4, pass3: 2, 'storage-node3': 2 }, metrics: metric(10, 8, 26, 12),
-      rationale: 'A master latch is open at clock 0 (and only when load is +1); a slave latch is open at clock +1. The two transparent phases form an edge-triggered register.', validation: 'Manual contract: data changes during high clock do not reach Q; a 0 → +1 edge transfers the master value.',
+      role: 'structural candidate', equivalence: { directType: 'register3', sequences: registerSequences }, nodeCount: 11, depth: 8, primitiveCounts: { 'clock-phase3': 1, min: 2, restore3: 4, pass3: 2, 'storage-node3': 2 }, metrics: metric(11, 8, 29, 13),
+      rationale: 'A master latch is open at clock 0 (and only when load is +1); a slave latch is open at clock +1. A second MIN gates reset with clock-high, preserving the direct register’s synchronous reset contract.', validation: 'Saved reset/write sequence compares the structural and direct register on every step.',
     }, ['d', 'load', 'clock', 'reset'], ['q'], (inner, inputs, outputs) => {
       const phase = inner.addComponent('clock-phase3', -160, 100, { label: 'CLK low phase' });
       const masterEnable = inner.addComponent('min', -10, 50, { label: 'LOAD ∧ CLK-low' });
+      const resetEnable = inner.addComponent('min', -10, 155, { label: 'RESET ∧ CLK-high' });
       const master = inner.addComponent(structuralLatch.type, 150, -65, { label: 'Master latch' });
       const slave = inner.addComponent(structuralLatch.type, 150, 100, { label: 'Slave latch' });
       inner.connect(inputs[2].id, 'out', phase.id, 'clock');
       inner.connect(inputs[1].id, 'out', masterEnable.id, 'a'); inner.connect(phase.id, 'out', masterEnable.id, 'b');
-      inner.connect(inputs[0].id, 'out', master.id, 'd'); inner.connect(masterEnable.id, 'out', master.id, 'enable'); inner.connect(inputs[3].id, 'out', master.id, 'reset');
-      inner.connect(master.id, 'q', slave.id, 'd'); inner.connect(inputs[2].id, 'out', slave.id, 'enable'); inner.connect(inputs[3].id, 'out', slave.id, 'reset');
+      inner.connect(inputs[3].id, 'out', resetEnable.id, 'a'); inner.connect(inputs[2].id, 'out', resetEnable.id, 'b');
+      inner.connect(inputs[0].id, 'out', master.id, 'd'); inner.connect(masterEnable.id, 'out', master.id, 'enable'); inner.connect(resetEnable.id, 'out', master.id, 'reset');
+      inner.connect(master.id, 'q', slave.id, 'd'); inner.connect(inputs[2].id, 'out', slave.id, 'enable'); inner.connect(resetEnable.id, 'out', slave.id, 'reset');
       inner.connect(slave.id, 'q', outputs[0].id, 'in');
     });
+    const references = {
+      'structural-latch-v1': structuralLatch,
+      'structural-register-v1': structuralRegister,
+    };
+    Object.entries(references).forEach(([name, meta]) => structuralReferences.set(name, meta));
+    Object.values(references).forEach(verifyStructuralReference);
+    if (!loadDemo) return references;
     rootCircuit.clear();
     const latchD = rootCircuit.addComponent('trit-input', -500, -220, { value: 1, label: 'Latch D' });
     const latchEnable = rootCircuit.addComponent('trit-input', -500, -145, { value: 1, label: 'Latch enable' });
@@ -2544,7 +2720,68 @@
     setStatus('Structural storage comparison loaded. Open a structural register, then a latch, to inspect its restorer, pass switch and storage-node cells. Inspector metrics compare nodes, depth, wires and canonical transitions.');
   }
 
-  function buildStructuralRoutingDemo() {
+  function buildStructuralRegisterBankDemo(loadDemo = true) {
+    const storageReferences = buildStructuralStorageDemo(false);
+    const routingReferences = buildStructuralRoutingDemo(false);
+    const label = uniqueName('Register bank — structural 3×1', [...customComponents.values()].map((meta) => meta.label), 'Register bank — structural 3×1');
+    const id = `${slug(label)}-${Date.now().toString(36)}`;
+    const inner = new Circuit(registry);
+    const inputs = ['d', 'address', 'action', 'clock', 'reset'].map((name, index) => inner.addComponent('component-input', -500, (index - 2) * 78, { name }));
+    const output = inner.addComponent('component-output', 500, 0, { name: 'out' });
+    const byName = Object.fromEntries(inputs.map((input) => [input.state.name, input]));
+    const decode = inner.addComponent(routingReferences['structural-control3-v1'].type, -280, 0, { label: 'Decode address' });
+    const writePasses = ['neg', 'zero', 'pos'].map((name, index) => inner.addComponent('pass3', -70, (index - 1) * 110, { label: name + ' write enable' }));
+    const registers = ['−1 register', '0 register', '+1 register'].map((name, index) => inner.addComponent(storageReferences['structural-register-v1'].type, 140, (index - 1) * 110, { label: name }));
+    const readSelect = inner.addComponent(routingReferences['structural-select3-v1'].type, 340, -35, { label: 'Select addressed register' });
+    const readPass = inner.addComponent('pass3', 350, 90, { label: 'Read-only output pass' });
+    const outputRestorer = inner.addComponent('restore3', 500, 90, { label: 'Restore readable output' });
+    inner.connect(byName.address.id, 'out', decode.id, 'control');
+    ['neg', 'zero', 'pos'].forEach((port, index) => {
+      inner.connect(decode.id, port, writePasses[index].id, 'in');
+      inner.connect(byName.action.id, 'out', writePasses[index].id, 'gate');
+      inner.connect(writePasses[index].id, 'out', registers[index].id, 'load');
+      inner.connect(byName.d.id, 'out', registers[index].id, 'd');
+      inner.connect(byName.clock.id, 'out', registers[index].id, 'clock');
+      inner.connect(byName.reset.id, 'out', registers[index].id, 'reset');
+      inner.connect(registers[index].id, 'q', readSelect.id, port);
+    });
+    inner.connect(byName.address.id, 'out', readSelect.id, 'select');
+    inner.connect(readSelect.id, 'out', readPass.id, 'in');
+    // A negative action is read. Control3's negative rail is a driven +1 only then.
+    const readDecode = inner.addComponent(routingReferences['structural-control3-v1'].type, 130, 220, { label: 'Decode read action' });
+    inner.connect(byName.action.id, 'out', readDecode.id, 'control');
+    inner.connect(readDecode.id, 'neg', readPass.id, 'gate');
+    inner.connect(readPass.id, 'out', outputRestorer.id, 'in');
+    inner.connect(outputRestorer.id, 'out', output.id, 'in');
+    const meta = {
+      id, type: `custom:${id}`, label, circuit: inner.serialize(),
+      experiment: {
+        role: 'structural reference', equivalence: { directType: 'register-bank3', sequences: [{ name: 'reset, addressed write and read', steps: [
+          { inputs: { d: 0, address: 0, action: 1, clock: 0, reset: 1 } },
+          { inputs: { d: 0, address: 0, action: 1, clock: 1, reset: 1 } },
+          { inputs: { d: 1, address: -1, action: 1, clock: 0, reset: 0 } },
+          { inputs: { d: 1, address: -1, action: 1, clock: 1, reset: 0 } },
+          { inputs: { d: 0, address: -1, action: -1, clock: 0, reset: 0 } },
+          { inputs: { d: 0, address: -1, action: -1, clock: 1, reset: 0 } },
+        ] }] }, nodeCount: 1, depth: 1,
+        primitiveCounts: { [routingReferences['structural-control3-v1'].type]: 2, pass3: 4, restore3: 1, [storageReferences['structural-register-v1'].type]: 3, [routingReferences['structural-select3-v1'].type]: 1 },
+        rationale: 'Control3 decodes the balanced address; each write enable is an explicit action-gated pass path into one structural register. A structural Select3 reads the addressed Q, and a separately decoded read action gates the public output.',
+        validation: 'Structural reference for the register-bank public contract; sequence equivalence cases are the next 14A.3 task.',
+      },
+    };
+    customComponents.set(id, meta); registerCustom(meta);
+    const references = { 'structural-register-bank3-v1': meta };
+    Object.entries(references).forEach(([name, definition]) => structuralReferences.set(name, definition));
+    Object.values(references).forEach(verifyStructuralReference);
+    if (!loadDemo) return references;
+    rootCircuit.clear();
+    rootCircuit.addComponent(meta.type, 0, 0, { label });
+    renderer.select(null); renderLibrary(); updateStats(); resetHistory();
+    setStatus('Structural 3×1 register bank loaded. Open it to inspect address decode, write paths, registers and Select3 read path.');
+    return references;
+  }
+
+  function buildStructuralRoutingDemo(loadDemo = true) {
     const add = (labelBase, experiment, inputNames, outputNames, wire, cases) => {
       const label = uniqueName(labelBase, [...customComponents.values()].map((meta) => meta.label), labelBase);
       const id = `${slug(label)}-${Date.now().toString(36)}`;
@@ -2666,7 +2903,27 @@
       };
       buildOutputTree('sum', outputs[0], -520); buildOutputTree('carry', outputs[1], 400);
     }, (inputs, outputs) => { const cases = []; for (const a of [-1, 0, 1]) for (const b of [-1, 0, 1]) for (const c of [-1, 0, 1]) { const raw = a + b + c; const carry = raw <= -2 ? -1 : raw >= 2 ? 1 : 0; cases.push({ id: 'normalize-' + a + '-' + b + '-' + c, name: 'a=' + fmt(a) + ', b=' + fmt(b) + ', c=' + fmt(c), inputs: { [inputs[0].id]: a, [inputs[1].id]: b, [inputs[2].id]: c }, expectedOutputs: { [outputs[0].id]: raw - 3 * carry, [outputs[1].id]: carry } }); } return cases; });
-    rootCircuit.clear(); [control, select, route, andGate, orGate, minGate, maxGate, negateGate, compareGate, normalizeGate].forEach((meta, index) => rootCircuit.addComponent(meta.type, -1485 + index * 330, 0, { label: meta.label }));
+    const adjustGate = add('Adjust3 — structural normalize', { role: 'structural reference', equivalence: { directType: 'adjust3' }, nodeCount: 134, depth: 10, primitiveCounts: { 'ternary-reference': 1, [normalizeGate.type]: 1 }, rationale: 'A declared zero rail turns the three-input structural Normalize / carry network into the value + control adjustment contract.', validation: 'Exhaustive 9/9 value/control cases saved.' }, ['value', 'control'], ['next', 'carry'], (inner, inputs, outputs) => {
+      const zero = inner.addComponent('ternary-reference', -180, 120, { value: 0, label: 'Zero reference' });
+      const normalize = inner.addComponent(normalizeGate.type, 0, 0, { label: 'Normalize value + control' });
+      inner.connect(inputs[0].id, 'out', normalize.id, 'a'); inner.connect(inputs[1].id, 'out', normalize.id, 'b'); inner.connect(zero.id, 'out', normalize.id, 'c');
+      inner.connect(normalize.id, 'sum', outputs[0].id, 'in'); inner.connect(normalize.id, 'carry', outputs[1].id, 'in');
+    }, (inputs, outputs) => { const cases = []; for (const value of [-1, 0, 1]) for (const control of [-1, 0, 1]) { const raw = value + control; const carry = raw < -1 ? -1 : raw > 1 ? 1 : 0; cases.push({ id: `adjust-${value}-${control}`, name: `value=${fmt(value)}, control=${fmt(control)}`, inputs: { [inputs[0].id]: value, [inputs[1].id]: control }, expectedOutputs: { [outputs[0].id]: raw - 3 * carry, [outputs[1].id]: carry } }); } return cases; });
+    const references = {
+      'structural-control3-v1': control,
+      'structural-select3-v1': select,
+      'structural-route3-v1': route,
+      'structural-min-v1': minGate,
+      'structural-max-v1': maxGate,
+      'structural-negate-v1': negateGate,
+      'structural-compare-v1': compareGate,
+      'structural-normalize-carry-v1': normalizeGate,
+      'structural-adjust3-v1': adjustGate,
+    };
+    Object.entries(references).forEach(([name, meta]) => structuralReferences.set(name, meta));
+    Object.values(references).forEach(verifyStructuralReference);
+    if (!loadDemo) return references;
+    rootCircuit.clear(); [control, select, route, andGate, orGate, minGate, maxGate, negateGate, compareGate, normalizeGate, adjustGate].forEach((meta, index) => rootCircuit.addComponent(meta.type, -1650 + index * 330, 0, { label: meta.label }));
     renderer.select(null); renderLibrary(); updateStats(); resetHistory();
     setStatus('Structural routing lab loaded. Each component has saved exhaustive known-trit cases; open it to inspect detector, pass, Merge3, zero-reference and control-inverter cells.');
   }

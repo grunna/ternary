@@ -191,9 +191,9 @@ A component must never become a magic shortcut: every high-level behavior needs 
 
 - [x] Show each built-in component’s execution role, structural status and known lower-level path in Inspector
 - [x] Document the initial accelerated-component inventory and distinguish cell boundaries from external adapters
-- [ ] Classify every reusable/system component as structural, accelerated-equivalent or external adapter
-- [ ] Store a named structural implementation reference alongside every accelerated component
-- [ ] Let an accelerated component open its structural implementation directly in the editor
+- [x] Classify every reusable/system component as structural, accelerated-equivalent or external adapter
+- [x] Store a named structural implementation reference alongside every accelerated component
+- [x] Let an accelerated component open its structural implementation directly in the editor
 
 ### Phase 14A.2 — Missing structural links
 
@@ -204,15 +204,15 @@ A component must never become a magic shortcut: every high-level behavior needs 
 - [x] Build structural Negate as a detector/reference/pass/merge level permutation
 - [x] Build structural Compare as a four-Select3 decision tree covering its 3×3 contract
 - [x] Build structural Normalize / carry as two exhaustive three-level Select3 decision trees (sum and carry)
-- [ ] Record any still-missing fundamental cell before allowing a higher-level accelerator to depend on it
+- [x] Record any still-missing fundamental cell before allowing a higher-level accelerator to depend on it
 
 ### Phase 14A.3 — Equivalence verification
 
 - [x] Add a Compare direct runner that executes saved vectors against a structural component and its named direct reference
-- [ ] Run common combinational vectors against structural and accelerated forms
-- [ ] Run common clock/reset/write sequences against structural and accelerated stateful forms
-- [ ] Report an equivalence failure as a component regression failure
-- [ ] Compare structural and accelerated forms by nodes, depth, wires, transitions and execution cost
+- [x] Run common combinational vectors against structural and accelerated forms
+- [x] Run common clock/reset/write sequences against structural and accelerated stateful forms
+- [x] Report an equivalence failure as a component regression failure
+- [x] Compare structural and accelerated forms by nodes, depth, wires, transitions and execution cost
 
 ## Phase 15 — Sequential ternary logic
 - [x] Clock / sequence source model

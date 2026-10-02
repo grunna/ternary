@@ -421,8 +421,14 @@ The Inspector is the live inventory: selecting a component now shows its executi
 
 - Ideal restorer, detector, pass switch and storage node are the technology-neutral cell boundary, not accelerators.
 - Ternary latch and register are accelerated, structurally equivalent: the Structural storage project opens their pass/restorer/storage and two-latch references.
-- The register bank is accelerated but structural-circuit pending: address decode, three registers, write selection and a Select3 read path must become open components.
-- Arithmetic, logic and routing candidates remain functional primitives with structural circuits pending. Their direct contracts are experiments, not proof that a cell-level network exists.
+- The register bank is accelerated, structurally equivalent: its named `3×1` reference opens address decode, three structural registers, write pass paths and a Select3 read path.
+- Arithmetic, logic and routing candidates with named structural decision networks are accelerated, structurally equivalent execution paths. The Inspector can open their structural reference directly.
 - Display and probe are external/observation boundaries and do not add ternary-machine behavior.
 
 A component marked **structural circuit pending** has a documented intended path, but is not evidence that the corresponding construction has been implemented yet.
+
+## Phase 14A cell audit
+
+The completed Phase 14A structural references require no fundamental cell beyond the current technology-neutral boundary: ternary reference rail, level detector, restorer, controlled pass switch, resolved `Merge3`, declared storage node and the two-state control inverter. The register bank is composed from those references rather than adding a hidden address, write or read primitive.
+
+This is a recorded negative result, not permission to add future shortcuts. Before any new accelerated component is classified as structurally equivalent, its proposed structural reference must either reduce to this boundary or record the missing fundamental cell explicitly.

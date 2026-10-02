@@ -282,10 +282,10 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .inspector .trit-choice button.active { background: #18334a; color: #d9ecff; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
 .component-test-value { min-width: 38px; text-align: center; border-radius: 6px; padding: 4px 7px; background: #151a20; font: 700 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .component-test-empty { color: var(--muted); font-size: 12px; }
-.component-test-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
-.component-test-actions input { min-width: 0; border: 1px solid var(--border); background: #151a20; color: var(--text); border-radius: 6px; padding: 6px 7px; }
+.component-test-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.component-test-actions input { grid-column: 1 / -1; min-width: 0; border: 1px solid var(--border); background: #151a20; color: var(--text); border-radius: 6px; padding: 6px 7px; }
 .component-test-actions button, .case-remove { border: 1px solid var(--border); border-radius: 6px; background: #151a20; color: var(--text); padding: 6px 7px; cursor: pointer; font-size: 11px; }
-.component-test-actions button:nth-last-child(-n + 2) { grid-column: span 1; }
+.component-test-actions button { min-width: 0; }
 .component-test-actions button:hover, .case-remove:hover { border-color: #64788d; }
 .component-test-case-list, .component-test-run-list { display: grid; gap: 5px; margin-top: 9px; }
 /* Keep large saved suites usable: actions remain visible while only the cases scroll. */
