@@ -713,6 +713,74 @@
       return { out: trit(values[address < 0 ? 0 : address > 0 ? 2 : 1]) };
     },
   });
+  registry.register({
+    type: 'memory3x1', label: 'Memory 3×1', category: 'storage', breaksCombinationalPath: true,
+    inputs: ['dataIn', 'address', 'action', 'clock', 'reset'], outputs: ['dataOut'],
+    defaultState: { values: [UNKNOWN, UNKNOWN, UNKNOWN], initialValue: 0, previousClock: 0 },
+    evaluate(c, { circuit }) {
+      const address = trit(c.inputs.address), action = trit(c.inputs.action), clock = trit(c.inputs.clock), reset = trit(c.inputs.reset), staged = circuit.getStagedState(c.id);
+      if (isKnownTrit(clock)) {
+        const risingEdge = trit(staged.previousClock) === 0 && clock === 1;
+        const patch = { previousClock: clock };
+        if (risingEdge && reset === 1) patch.values = [trit(c.state.initialValue), trit(c.state.initialValue), trit(c.state.initialValue)];
+        else if (risingEdge && reset === 0 && action === 1 && isKnownTrit(address) && isKnownTrit(c.inputs.dataIn)) {
+          const values = [...(Array.isArray(staged.values) ? staged.values : [UNKNOWN, UNKNOWN, UNKNOWN])].map(trit);
+          values[address < 0 ? 0 : address > 0 ? 2 : 1] = trit(c.inputs.dataIn); patch.values = values;
+        }
+        circuit.stageStateCommit(c.id, patch);
+      }
+      if (action !== -1 || !isKnownTrit(address)) return { dataOut: UNKNOWN };
+      const values = Array.isArray(c.state.values) ? c.state.values : [UNKNOWN, UNKNOWN, UNKNOWN];
+      return { dataOut: trit(values[address < 0 ? 0 : address > 0 ? 2 : 1]) };
+    },
+  });
+  const wordLanes = ['5', '4', '3', '2', '1', '0'];
+  registry.register({
+    type: 'memory3x6', label: 'Memory 3×6', category: 'storage', breaksCombinationalPath: true,
+    inputs: [...wordLanes.map((lane) => `dataIn${lane}`), 'address', 'action', 'clock', 'reset'], outputs: wordLanes.map((lane) => `dataOut${lane}`),
+    defaultState: { values: Array.from({ length: 3 }, () => Array(6).fill(UNKNOWN)), initialValue: 0, previousClock: 0 },
+    evaluate(c, { circuit }) {
+      const address = trit(c.inputs.address), action = trit(c.inputs.action), clock = trit(c.inputs.clock), reset = trit(c.inputs.reset), staged = circuit.getStagedState(c.id);
+      if (isKnownTrit(clock)) {
+        const rising = trit(staged.previousClock) === 0 && clock === 1, patch = { previousClock: clock };
+        if (rising && reset === 1) patch.values = Array.from({ length: 3 }, () => Array(6).fill(trit(c.state.initialValue)));
+        else if (rising && reset === 0 && action === 1 && isKnownTrit(address) && wordLanes.every((lane) => isKnownTrit(c.inputs[`dataIn${lane}`]))) {
+          const values = (Array.isArray(staged.values) ? staged.values : []).map((word) => Array.isArray(word) ? word.map(trit) : Array(6).fill(UNKNOWN));
+          while (values.length < 3) values.push(Array(6).fill(UNKNOWN));
+          values[address < 0 ? 0 : address > 0 ? 2 : 1] = wordLanes.map((lane) => trit(c.inputs[`dataIn${lane}`])); patch.values = values;
+        }
+        circuit.stageStateCommit(c.id, patch);
+      }
+      if (action !== -1 || !isKnownTrit(address)) return Object.fromEntries(wordLanes.map((lane) => [`dataOut${lane}`, UNKNOWN]));
+      const values = Array.isArray(c.state.values) ? c.state.values : [];
+      const word = values[address < 0 ? 0 : address > 0 ? 2 : 1] || Array(6).fill(UNKNOWN);
+      return Object.fromEntries(wordLanes.map((lane, index) => [`dataOut${lane}`, trit(word[index])]));
+    },
+  });
+  const registerScaledWordMemory = (type, label, locations, addressWidth, structuralImplementation) => {
+    const addressPorts = Array.from({ length: addressWidth }, (_, index) => `address${addressWidth - 1 - index}`);
+    const offset = (locations - 1) / 2;
+    registry.register({ type, label, category: 'storage', breaksCombinationalPath: true,
+      inputs: [...wordLanes.map((lane) => `dataIn${lane}`), ...addressPorts, 'action', 'clock', 'reset'], outputs: wordLanes.map((lane) => `dataOut${lane}`),
+      defaultState: { values: Array.from({ length: locations }, () => Array(6).fill(UNKNOWN)), initialValue: 0, previousClock: 0 },
+      evaluate(c, { circuit }) {
+        const address = balancedWordValue(addressPorts.map((name) => trit(c.inputs[name]))), action = trit(c.inputs.action), clock = trit(c.inputs.clock), reset = trit(c.inputs.reset), staged = circuit.getStagedState(c.id);
+        const validAddress = address !== null && address >= -offset && address <= offset;
+        if (isKnownTrit(clock)) { const rising = trit(staged.previousClock) === 0 && clock === 1, patch = { previousClock: clock };
+          if (rising && reset === 1) patch.values = Array.from({ length: locations }, () => Array(6).fill(trit(c.state.initialValue)));
+          else if (rising && reset === 0 && action === 1 && validAddress && wordLanes.every((lane) => isKnownTrit(c.inputs[`dataIn${lane}`]))) { const values = (staged.values || []).map((word) => Array.isArray(word) ? word.map(trit) : Array(6).fill(UNKNOWN)); while (values.length < locations) values.push(Array(6).fill(UNKNOWN)); values[address + offset] = wordLanes.map((lane) => trit(c.inputs[`dataIn${lane}`])); patch.values = values; }
+          circuit.stageStateCommit(c.id, patch); }
+        if (action !== -1 || !validAddress) return Object.fromEntries(wordLanes.map((lane) => [`dataOut${lane}`, UNKNOWN]));
+        const word = (c.state.values || [])[address + offset] || Array(6).fill(UNKNOWN); return Object.fromEntries(wordLanes.map((lane, index) => [`dataOut${lane}`, trit(word[index])]));
+      },
+    });
+    registry.get(type).implementation = { mode: 'accelerated-equivalent', status: 'structural reference available', summary: `${label} accelerates a named hierarchy of proven Memory 3×6 blocks.`, layers: [`${locations} tryte locations`, `${addressWidth}-trit balanced address hierarchy`, 'Atomic six-trit word boundary'], structuralImplementation };
+  };
+  // These are execution accelerators only. Each has a recursively composed
+  // Memory 3×6 hierarchy with the same public address/action/clock contract.
+  registerScaledWordMemory('memory9x6', 'Memory 9×6', 9, 2, 'structural-memory9x6-v1');
+  registerScaledWordMemory('memory27x6', 'Memory 27×6', 27, 3, 'structural-memory27x6-v1');
+  registerScaledWordMemory('memory81x6', 'Memory 81×6', 81, 4, 'structural-memory81x6-v1');
 
   const experimentalCost = () => ({ logical: { nodes: 1, depth: 1 } });
 
@@ -895,6 +963,8 @@
     latch3: { mode: 'accelerated-equivalent', status: 'structural reference available', summary: 'Native execution accelerates the named structural latch.', layers: ['Ternary restorer', 'Ternary pass switch', 'Ternary storage node'], structuralImplementation: 'structural-latch-v1' },
     register3: { mode: 'accelerated-equivalent', status: 'structural reference available', summary: 'Native execution accelerates the named two-latch register.', layers: ['Clock phase inverter', 'load control', 'two structural latches'], structuralImplementation: 'structural-register-v1' },
     'register-bank3': { mode: 'accelerated-equivalent', status: 'structural reference available', summary: 'Native bank execution accelerates the named structural 3×1 bank.', layers: ['Ternary address decoder', 'three structural registers', 'write pass paths', 'Select3 read path'], structuralImplementation: 'structural-register-bank3-v1' },
+    'memory3x1': { mode: 'accelerated-equivalent', status: 'structural reference available', summary: 'Native memory execution accelerates the named structural three-location ternary memory.', layers: ['Ternary address decoder', 'three structural registers', 'action-gated write paths', 'Select3 read path'], structuralImplementation: 'structural-memory3x1-v1' },
+    'memory3x6': { mode: 'accelerated-equivalent', status: 'structural reference available', summary: 'Native word memory execution accelerates six aligned structural Memory 3×1 lanes.', layers: ['Six structural Memory 3×1 lanes', 'Shared address/action/clock/reset', 'Atomic six-trit word boundary'], structuralImplementation: 'structural-memory3x6-v1' },
     'seven-segment-display': { mode: 'external-adapter', status: 'user I/O display boundary', summary: 'An end-user peripheral consumes eight two-state segment-control lines. It is outside the ternary logic hierarchy, not a ternary shortcut.', layers: ['Ternary decoder component', '0 / +1 segment-control boundary', 'Physical/display adapter'] },
     'trit-led': { mode: 'external-adapter', status: 'user I/O indicator boundary', summary: 'A visible end-user indicator samples one ternary wire and renders −1, 0, +1, Z or ? without driving a signal back into the circuit.', layers: ['One sampled ternary wire', 'Visible trit LED adapter'] },
     'binary-led': { mode: 'external-adapter', status: 'user I/O binary indicator boundary', summary: 'A two-terminal physical LED module treats either driven ternary polarity (−1 or +1) as on and 0 as off. Z and ? are simulator-visible invalid wiring states, never normal physical LED states.', layers: ['One sampled ternary wire', 'Polarity-independent LED driver', 'Two-terminal physical LED'] },

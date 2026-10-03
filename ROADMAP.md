@@ -248,6 +248,7 @@ This phase ends with tested, reusable word-level operations. It deliberately doe
 ### Phase 16B.1 — Word representation and arithmetic
 
 - [x] Fix the first CPU word width at 6 balanced trits (`−364 … +364`)
+- [x] Standardize English terminology: trit (one digit), tryte (six trits), word (one tryte in the first CPU), memory location; never use binary “byte”
 - [x] Build an opening reusable 6-trit word component
 - [x] Validate all 729 six-trit words at the word boundary
 - [x] Native ternary adder — opening 6-trit Normalize / carry ripple chain
@@ -298,30 +299,30 @@ Memory is completed before CPU integration. It must be a reusable, inspectable s
 
 ### Phase 17A — One-trit memory fabric
 
-- [ ] Define the memory-port contract: balanced address, data-in, data-out, read/idle/write action, clock and reset
-- [ ] Decide and document read latency, write edge, reset behavior and invalid/unknown-address behavior
-- [ ] Build `Memory 3×1` structurally: ternary address decode, write selection, three structural registers and Select3 read path
-- [ ] Make every internal decoder, selector and register openable from the memory component
-- [ ] Test all addresses and read/idle/write actions across clock/reset sequences
-- [ ] Verify that an idle or invalid access cannot alter stored values
+- [x] Define the memory-port contract: balanced address, data-in, data-out, read/idle/write action, clock and reset
+- [x] Decide and document read latency, write edge, reset behavior and invalid/unknown-address behavior
+- [x] Build `Memory 3×1` structurally: ternary address decode, write selection, three structural registers and Select3 read path
+- [x] Make every internal decoder, selector and register openable from the memory component
+- [x] Test all addresses and read/idle/write actions across clock/reset sequences
+- [x] Verify that an idle or invalid access cannot alter stored values
 
 ### Phase 17B — Six-trit word memory
 
-- [ ] Build `Memory 3×6` from six aligned Memory 3×1 lanes
-- [ ] Guarantee one clock-edge write updates one complete 6-trit word, never a mixture of old and new trits
-- [ ] Validate all 729 data words at each of the three addresses through the public memory interface
-- [ ] Add word-level read probes and a native balanced-ternary word display for inspection
-- [ ] Package the structural memory as a reusable component with saved regression and sequence tests
+- [x] Build `Memory 3×6` from six aligned Memory 3×1 lanes
+- [x] Guarantee one clock-edge write updates one complete 6-trit word, never a mixture of old and new trits
+- [x] Validate all 729 data words at each of the three addresses through the public memory interface
+- [x] Add word-level read probes and a native balanced-ternary word display for inspection
+- [x] Package the structural memory as a reusable component with saved regression and sequence tests
 
 ### Phase 17C — Scaled and accelerated memory
 
-- [ ] Compose structural `9×6`, `27×6` and larger memories from the proven smaller references
-- [ ] Define balanced multi-trit addressing and address-decode hierarchy for each capacity
-- [ ] Measure nodes, depth, wires, transitions and simulator execution cost at each size
-- [ ] Define initialization/loading and reset policy without bypassing the public memory contract
-- [ ] Build a fast RAM implementation only after its named structural reference exists
-- [ ] Run the same read/write/reset sequence suite against structural memory and fast RAM
-- [ ] Let fast RAM open its structural reference and report equivalence failures as regressions
+- [x] Compose structural `9×6`, `27×6` and `81×6` memories from the proven smaller references
+- [x] Define balanced multi-trit addressing and address-decode hierarchy for each capacity
+- [x] Measure nodes, depth, wires, transitions and simulator execution cost at each size
+- [x] Define initialization/loading and reset policy without bypassing the public memory contract
+- [x] Build a fast RAM implementation only after its named structural reference exists
+- [x] Run the same read/write/reset sequence suite against structural memory and fast RAM
+- [x] Let fast RAM open its structural reference and report equivalence failures as regressions
 
 ## Phase 18 — First ternary computer
 

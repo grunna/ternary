@@ -29,6 +29,19 @@ This is the project’s definition of physically viable: the logic is structural
 | Reusable component boundary | named input/output ports | Components own an explicit public contract, saved regression cases and per-instance internal runtime. Structural sequential components can therefore retain state without sharing it across callers. |
 | 7-segment output boundary | `A–G, Sign`: `0` = off, `+1` = on | This is a deliberate two-state peripheral adapter, not binary logic leaking into the ternary datapath. Ternary decoders remain open components; they turn ternary decisions into the two physical states an individual segment needs. `-1`, `?` and `Z` remain visible as invalid at this boundary rather than being mistaken for off. |
 | CPU word width | 6 balanced trits, `−364 … +364` | Six trits give 729 states and are small enough for the first opening CPU components while still requiring meaningful multi-trit carry, comparison and storage. This fixes the first register, ALU and instruction-word width; wider words can be introduced later without changing ternary semantics. |
+
+## Core terminology
+
+The project uses these English terms consistently:
+
+| Term | Meaning |
+| --- | --- |
+| **trit** | One balanced ternary digit: `−1`, `0` or `+1`. |
+| **tryte** | Exactly six trits. A tryte represents `−364 … +364`, or 729 distinct states. |
+| **word** | The CPU's normal data unit. In the first CPU, one word is one tryte. A later wider CPU may define a word as multiple trytes without changing the meaning of a trit or tryte. |
+| **memory location** | One addressed storage position. In `Memory 3×6`, each of the three memory locations holds one tryte. |
+
+“Byte” is deliberately not used: it means eight binary bits and would obscure the ternary architecture.
 | 6-trit ripple adder | `A + B + CarryIn = Sum + 729×CarryOut` | Six Normalize / carry cells chain from `t0` to `t5`. This is the opening word-level arithmetic reference: every cell retains the proven 27-case contract and only its carry travels to the next trit weight. `CarryOut` is signed word extension: `-1` below range, `0` in range and `+1` above range. The six output trits always contain the canonical modulo-729 result; there is no saturation or trap. |
 | 6-trit negate / subtract | `A − B + CarryIn = Difference + 729×CarryOut` | Negation is digitwise in balanced ternary, so a reusable six-lane negator needs no carry propagation. Subtraction feeds the negated B word into the same six-cell Normalize / carry ripple chain; `CarryIn` supports later multi-word composition. For subtraction, `CarryOut=-1` is negative underflow (the borrow direction), `0` is in range and `+1` is positive overflow; it is deliberately not a binary no-borrow flag. |
 | 6-trit comparator | `A,B → Order, Less, Equal, Greater` | Six proven Compare blocks are resolved most-significant-first by five Select3 stages. `Order` is the native `-1 / 0 / +1` comparison result; `Less`, `Equal` and `Greater` are one-hot `0 / +1` control outputs made by a final Threshold3 boundary decode. |
@@ -90,7 +103,27 @@ The opening register map fits the first six-trit CPU address range:
 | `0` | Serial-data window. The adapter serializes the six trits most-significant first onto the RGB display's `data`/`clock` pair. | Six-trit balanced count `0…17` of trits currently collected for the next 18-trit pixel packet. |
 | `+1` | Reserved for a later explicit framing/transport extension. | Reserved; reads as balanced word `0`. |
 
-Thus one RGB pixel takes three ordinary CPU writes to address `0`: R word, then G word, then B word. The adapter produces six internal serial display clocks for each CPU data write, and its third write completes the display's 18-trit pixel packet. A full 24×24 frame is 1,728 six-trit CPU writes. The adapter owns this serialization state and exposes only status through the normal memory read action; it must never let an invalid address, action, data or clock partially alter the serial packet or display frame. Its final read latency, wait/ready policy and structural-vs-accelerated implementation remain gated on the Phase 17 memory contract.
+Thus one RGB pixel takes three ordinary CPU writes to address `0`: R word, then G word, then B word. The adapter produces six internal serial display clocks for each CPU data write, and its third write completes the display's 18-trit pixel packet. A full 24×24 frame is 1,728 six-trit CPU writes. The adapter owns this serialization state and exposes only status through the normal memory read action; it must never let an invalid address, action, data or clock partially alter the serial packet or display frame. Its read timing now follows the memory contract below; its wait/ready policy and structural-vs-accelerated implementation remain deferred until the adapter itself is built.
+
+## Memory port contract
+
+The opening memory interface is shared by `Memory 3×1`, word memory and future memory-mapped adapters. It has one balanced `address` trit (or an ordered balanced address word in larger memories), `dataIn`, `dataOut`, ternary `action`, `clock` and `reset`. The action trit remains packed through the CPU-facing port: `−1 = read`, `0 = idle`, `+1 = write`. There are no separate binary read-enable and write-enable wires.
+
+| Condition | `dataOut` | Stored state |
+| --- | --- | --- |
+| `action=−1`, known address | Combinatorially exposes the addressed stored trit after ordinary propagation settles. | Unchanged. |
+| `action=0` | `?` — no read result is being claimed. | Unchanged. |
+| `action=+1`, known address/data, known `clock: 0 → +1` | `?` during the write transaction. | The addressed location commits `dataIn` on the edge. |
+| `reset=+1`, known `clock: 0 → +1` | `?` during reset. | Reset has priority and commits every location to its declared initial value, initially `0`. |
+| Invalid/floating/unknown address, data, action or clock | `?` whenever a read result cannot be determined. | Never changes because of that invalid access. |
+
+Memory starts unresolved until a valid reset edge establishes its initial contents. Reads are **zero-cycle combinational** after a settled address/action: an instruction or later CPU controller must make its read action and address stable, then sample `dataOut` in its documented state transition. Writes and reset are **synchronous**, occurring only on the exact known `0 → +1` edge. A read and write cannot happen together because one action trit selects exactly one of them. The implementation stages every location from the same pre-edge snapshot, so a future six-trit word write cannot become a mixture of old and new lanes.
+
+### Scaled memory hierarchy and initialization
+
+`Memory 9×6`, `27×6` and `81×6` use two, three and four ordered address trits respectively, most-significant first. Their valid balanced address ranges are `−4…+4`, `−13…+13` and `−40…+40`. Each extra high trit selects one of three complete smaller memory banks; a `Route3` forwards the packed action only to that bank and six `Select3` cells return its word. This preserves a single read/idle/write action and never introduces a binary chip-select port.
+
+All scaled memories begin unresolved. A public reset transaction (`reset=+1` on a known `0 → +1` clock edge) broadcasts to every child bank and initializes every word to the declared initial value, currently zero; address and data are irrelevant to that reset edge. There is deliberately no preload backdoor. Programs or fixtures load contents only through ordinary known-address write transactions, so the accelerated RAM and its inspectable hierarchy share the same observable initialization, read, write and reset behavior.
 
 | Native multi-trit display | one `− / 0 / +` glyph per trit, most-significant trit first | A CPU value is shown as its balanced-ternary word, without conversion or a separate sign bit. It scales directly from one trit to the fixed six-trit CPU word and keeps every stored state visible. Decimal rendering is intentionally deferred: it is a debugger/peripheral adapter, built from open reusable pieces (word converter, digit decoder and three displays) after multi-trit arithmetic exists. |
 | Decimal display capacity | sign plus three decimal positions | The future decimal peripheral covers the whole first CPU-word range `−364 … +364`; its unused capacity up to 999 is acceptable. It is not an architectural reason to widen the CPU word. |

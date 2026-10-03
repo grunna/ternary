@@ -18,7 +18,7 @@
 
   const simulation = { mode: 'run', previousMode: 'run', timer: null, generatorTimer: null, generatorLastTick: performance.now(), activeUnsubscribers: [] };
 
-  const UTILITY_PRIMITIVES = ['trit-input', 'word-input6', 'input-button3', 'input-joystick3', 'input-joystick6', 'ternary-reference', 'sequence-generator', 'latch3', 'register3', 'register-bank3', 'seven-segment-display', 'trit-led', 'binary-led', 'word-display6', 'pixel-display3', 'rgb-display24-addressed', 'rgb-display24-stream', 'word-probe6', 'decimal-debug6', 'probe'];
+  const UTILITY_PRIMITIVES = ['trit-input', 'word-input6', 'input-button3', 'input-joystick3', 'input-joystick6', 'ternary-reference', 'sequence-generator', 'latch3', 'register3', 'register-bank3', 'memory3x1', 'memory3x6', 'memory9x6', 'memory27x6', 'memory81x6', 'seven-segment-display', 'trit-led', 'binary-led', 'word-display6', 'pixel-display3', 'rgb-display24-addressed', 'rgb-display24-stream', 'word-probe6', 'decimal-debug6', 'probe'];
   const EXPERIMENTAL_PRIMITIVES = ['negate', 'compare', 'select3', 'route3', 'adjust3', 'control3', 'threshold3', 'restore3', 'pass3', 'merge3', 'ternary-reference', 'storage-node3', 'clock-phase3', 'min', 'max', 'normalize-carry'];
   const PRIMITIVE_SETS = {
     all: { label: 'All candidates', description: 'Expose every current ternary primitive candidate.', types: [...EXPERIMENTAL_PRIMITIVES], metadata: { purpose: 'exploration', logicalCostModel: 'sum primitive node costs' } },
@@ -32,7 +32,7 @@
     { label: 'Logic & signal shaping', types: ['negate', 'min', 'max', 'threshold3', 'restore3', 'pass3', 'merge3'] },
     { label: 'Compare & routing', types: ['compare', 'select3', 'route3', 'control3'] },
     { label: 'Arithmetic', types: ['adjust3', 'normalize-carry'] },
-    { label: 'State & timing', types: ['latch3', 'register3', 'register-bank3', 'storage-node3', 'clock-phase3'] },
+    { label: 'State & timing', types: ['latch3', 'register3', 'register-bank3', 'memory3x1', 'memory3x6', 'memory9x6', 'memory27x6', 'memory81x6', 'storage-node3', 'clock-phase3'] },
   ];
   const primitiveExperiment = { activeId: 'all', customTypes: new Set(EXPERIMENTAL_PRIMITIVES) };
   const PROJECT_FORMAT_VERSION = 6;
@@ -1178,6 +1178,8 @@
       latch3: 'transparent ternary storage while enable = +1',
       register3: 'D flip-flop: LOAD on clock 0 → +1',
       'register-bank3': 'three trit registers with ternary read / idle / write',
+      'memory3x1': 'three addressed trit locations; read / idle / write',
+      'memory3x6': 'three addressed six-trit words; atomic word writes',
       negate: 'x → -x',
       compare: 'A<B / = / >',
       select3: 'native 3-way route',
@@ -1632,7 +1634,17 @@
   function openStructuralImplementation(reference) {
     let meta = structuralReferences.get(reference);
     if (!meta || !customComponents.has(meta.id)) {
-      const references = reference === 'structural-register-bank3-v1'
+      const references = reference === 'structural-memory81x6-v1'
+        ? buildStructuralScaledMemoryDemo(81, false)
+        : reference === 'structural-memory27x6-v1'
+        ? buildStructuralScaledMemoryDemo(27, false)
+        : reference === 'structural-memory9x6-v1'
+        ? buildStructuralScaledMemoryDemo(9, false)
+        : reference === 'structural-memory3x6-v1'
+        ? buildStructuralMemoryWordDemo(false)
+        : reference === 'structural-memory3x1-v1'
+        ? buildStructuralMemoryDemo(false)
+        : reference === 'structural-register-bank3-v1'
         ? buildStructuralRegisterBankDemo(false)
         : reference.startsWith('structural-latch') || reference.startsWith('structural-register')
           ? buildStructuralStorageDemo(false)
@@ -3237,6 +3249,128 @@
     renderer.select(null); renderLibrary(); updateStats(); resetHistory();
     setStatus('Structural 3×1 register bank loaded. Open it to inspect address decode, write paths, registers and Select3 read path.');
     return references;
+  }
+
+  function buildStructuralMemoryDemo(loadDemo = true) {
+    const bank = buildStructuralRegisterBankDemo(false)['structural-register-bank3-v1'];
+    const label = uniqueName('Memory 3×1 — structural', [...customComponents.values()].map((meta) => meta.label), 'Memory 3×1 — structural');
+    const id = `${slug(label)}-${Date.now().toString(36)}`;
+    const inner = new Circuit(registry);
+    const inputs = ['dataIn', 'address', 'action', 'clock', 'reset'].map((name, index) => inner.addComponent('component-input', -380, (index - 2) * 78, { name }));
+    const output = inner.addComponent('component-output', 340, 0, { name: 'dataOut' });
+    const fabric = inner.addComponent(bank.type, 0, 0, { label: 'Three addressed structural cells' });
+    const byName = Object.fromEntries(inputs.map((input) => [input.state.name, input]));
+    inner.connect(byName.dataIn.id, 'out', fabric.id, 'd');
+    ['address', 'action', 'clock', 'reset'].forEach((name) => inner.connect(byName[name].id, 'out', fabric.id, name));
+    inner.connect(fabric.id, 'out', output.id, 'in');
+    const meta = {
+      id, type: `custom:${id}`, label, circuit: inner.serialize(),
+      experiment: {
+        role: 'structural reference', equivalence: { directType: 'memory3x1', sequences: [{ name: 'reset, write all addresses, read', steps: [
+          { inputs: { dataIn: 0, address: 0, action: 1, clock: 0, reset: 1 } },
+          { inputs: { dataIn: 0, address: 0, action: 1, clock: 1, reset: 1 } },
+          { inputs: { dataIn: -1, address: -1, action: 1, clock: 0, reset: 0 } },
+          { inputs: { dataIn: -1, address: -1, action: 1, clock: 1, reset: 0 } },
+          { inputs: { dataIn: 1, address: 1, action: 1, clock: 0, reset: 0 } },
+          { inputs: { dataIn: 1, address: 1, action: 1, clock: 1, reset: 0 } },
+          { inputs: { dataIn: -1, address: -1, action: -1, clock: 0, reset: 0 } },
+        ] }] }, nodeCount: 1, depth: 1,
+        primitiveCounts: { [bank.type]: 1 },
+        rationale: 'Memory 3×1 is an explicit public memory port wrapped around the opening structural three-register fabric. Open the fabric to inspect address decode, action-gated writes, all three registers and the Select3 read path.',
+        validation: 'All address/action/reset sequences are covered by the Memory 3×1 contract suite.',
+      },
+    };
+    customComponents.set(id, meta); registerCustom(meta);
+    const references = { 'structural-memory3x1-v1': meta };
+    Object.entries(references).forEach(([name, definition]) => structuralReferences.set(name, definition));
+    Object.values(references).forEach(verifyStructuralReference);
+    if (!loadDemo) return references;
+    rootCircuit.clear(); rootCircuit.addComponent(meta.type, 0, 0, { label });
+    renderer.select(null); renderLibrary(); updateStats(); resetHistory();
+    setStatus('Structural Memory 3×1 loaded. Open internals to inspect the three registers, decoder, write paths and Select3 read path.');
+    return references;
+  }
+
+  function buildStructuralMemoryWordDemo(loadDemo = true) {
+    const lane = buildStructuralMemoryDemo(false)['structural-memory3x1-v1'];
+    const label = uniqueName('Memory 3×6 — structural', [...customComponents.values()].map((meta) => meta.label), 'Memory 3×6 — structural');
+    const id = `${slug(label)}-${Date.now().toString(36)}`, inner = new Circuit(registry);
+    const names = [...['5', '4', '3', '2', '1', '0'].map((n) => `dataIn${n}`), 'address', 'action', 'clock', 'reset'];
+    const inputs = names.map((name, index) => inner.addComponent('component-input', -460, (index - 5) * 55, { name }));
+    const outputs = ['5', '4', '3', '2', '1', '0'].map((n, index) => inner.addComponent('component-output', 420, (index - 2.5) * 65, { name: `dataOut${n}` }));
+    const byName = Object.fromEntries(inputs.map((input) => [input.state.name, input]));
+    const memories = ['5', '4', '3', '2', '1', '0'].map((n, index) => inner.addComponent(lane.type, 0, (index - 2.5) * 65, { label: `Memory lane ${n}` }));
+    memories.forEach((memory, index) => { const n = ['5', '4', '3', '2', '1', '0'][index]; inner.connect(byName[`dataIn${n}`].id, 'out', memory.id, 'dataIn'); ['address', 'action', 'clock', 'reset'].forEach((name) => inner.connect(byName[name].id, 'out', memory.id, name)); inner.connect(memory.id, 'dataOut', outputs[index].id, 'in'); });
+    const meta = { id, type: `custom:${id}`, label, circuit: inner.serialize(), experiment: { role: 'structural reference', equivalence: { directType: 'memory3x6', sequences: [] }, nodeCount: 6, depth: 1, primitiveCounts: { [lane.type]: 6 }, rationale: 'Six aligned structural Memory 3×1 lanes share one address, action, clock and reset. Each lane receives the same edge, so a word write is atomic at the public boundary.', validation: 'The direct Memory 3×6 contract exhaustively checks all 729 words at all three addresses.' } };
+    customComponents.set(id, meta); registerCustom(meta); structuralReferences.set('structural-memory3x6-v1', meta);
+    if (!loadDemo) return { 'structural-memory3x6-v1': meta };
+    rootCircuit.clear(); rootCircuit.addComponent(meta.type, 0, 0, { label }); renderer.select(null); renderLibrary(); updateStats(); resetHistory(); return { 'structural-memory3x6-v1': meta };
+  }
+
+  // A scaled bank has three smaller banks. Its most-significant address trit
+  // routes the packed action to exactly one child and selects that child's word
+  // readback; lower address trits stay in their original order. Reset is
+  // broadcast so every location is initialized even when address is invalid.
+  function buildStructuralScaledMemoryDemo(locations, loadDemo = true) {
+    const configurations = {
+      9: { childLocations: 3, childReference: 'structural-memory3x6-v1', addressWidth: 2, childAddressNames: ['address'] },
+      27: { childLocations: 9, childReference: 'structural-memory9x6-v1', addressWidth: 3, childAddressNames: ['address1', 'address0'] },
+      81: { childLocations: 27, childReference: 'structural-memory27x6-v1', addressWidth: 4, childAddressNames: ['address2', 'address1', 'address0'] },
+    };
+    const config = configurations[locations];
+    if (!config) throw new Error(`No scaled-memory hierarchy is defined for ${locations} locations.`);
+    let child = structuralReferences.get(config.childReference);
+    if (!child || !customComponents.has(child.id)) child = config.childLocations === 3
+      ? buildStructuralMemoryWordDemo(false)['structural-memory3x6-v1']
+      : buildStructuralScaledMemoryDemo(config.childLocations, false)[config.childReference];
+    const label = uniqueName(`Memory ${locations}×6 — structural`, [...customComponents.values()].map((meta) => meta.label), `Memory ${locations}×6 — structural`);
+    const id = `${slug(label)}-${Date.now().toString(36)}`, inner = new Circuit(registry);
+    const addressNames = Array.from({ length: config.addressWidth }, (_, index) => `address${config.addressWidth - 1 - index}`);
+    const lanes = ['5', '4', '3', '2', '1', '0'];
+    const inputNames = [...lanes.map((n) => `dataIn${n}`), ...addressNames, 'action', 'clock', 'reset'];
+    const inputs = inputNames.map((name, index) => inner.addComponent('component-input', -560, (index - (inputNames.length - 1) / 2) * 48, { name }));
+    const outputs = lanes.map((n, index) => inner.addComponent('component-output', 500, (index - 2.5) * 64, { name: `dataOut${n}` }));
+    const byName = Object.fromEntries(inputs.map((input) => [input.state.name, input]));
+    const router = inner.addComponent('route3', -235, 0, { label: 'Select addressed bank' });
+    const branches = ['neg', 'zero', 'pos'];
+    const banks = branches.map((branch, index) => inner.addComponent(child.type, 0, (index - 1) * 210, { label: `${branch} address bank` }));
+    inner.connect(byName.action.id, 'out', router.id, 'in');
+    inner.connect(byName[addressNames[0]].id, 'out', router.id, 'select');
+    banks.forEach((bank, index) => {
+      lanes.forEach((lane) => inner.connect(byName[`dataIn${lane}`].id, 'out', bank.id, `dataIn${lane}`));
+      addressNames.slice(1).forEach((name, addressIndex) => inner.connect(byName[name].id, 'out', bank.id, config.childAddressNames[addressIndex]));
+      inner.connect(router.id, branches[index], bank.id, 'action');
+      inner.connect(byName.clock.id, 'out', bank.id, 'clock');
+      inner.connect(byName.reset.id, 'out', bank.id, 'reset');
+    });
+    lanes.forEach((lane, index) => {
+      const select = inner.addComponent('select3', 280, (index - 2.5) * 64, { label: `Read lane ${lane}` });
+      banks.forEach((bank, bankIndex) => inner.connect(bank.id, `dataOut${lane}`, select.id, branches[bankIndex]));
+      inner.connect(byName[addressNames[0]].id, 'out', select.id, 'select');
+      inner.connect(select.id, 'out', outputs[index].id, 'in');
+    });
+    const childMetrics = child.experiment?.metrics || { nodes: child.experiment?.nodeCount || 1, depth: child.experiment?.depth || 1 };
+    const baseInputs = (top, action, clock, reset, value = 0) => ({ ...Object.fromEntries(lanes.map((lane, index) => [`dataIn${lane}`, (value + index) % 3 - 1])), ...Object.fromEntries(addressNames.map((name, index) => [name, index === 0 ? top : 0])), action, clock, reset });
+    const sequence = [
+      { inputs: baseInputs(0, 0, 0, 1) }, { inputs: baseInputs(0, 0, 1, 1) },
+      ...[-1, 0, 1].flatMap((top, index) => [{ inputs: baseInputs(top, 1, 0, 0, index) }, { inputs: baseInputs(top, 1, 1, 0, index) }, { inputs: baseInputs(top, -1, 0, 0, index) }]),
+    ];
+    const meta = {
+      id, type: `custom:${id}`, label, circuit: inner.serialize(),
+      experiment: {
+        role: 'structural reference', equivalence: { directType: `memory${locations}x6`, sequences: [{ name: 'reset, write each top-level bank, then read', steps: sequence }] },
+        nodeCount: childMetrics.nodes * 3 + 7, depth: childMetrics.depth + 2,
+        primitiveCounts: { [child.type]: 3, route3: 1, select3: 6 },
+        metrics: { nodes: childMetrics.nodes * 3 + 7, depth: childMetrics.depth + 2, wires: inner.wires.size, transitions: 0, transitionScenario: 'reset plus one write/read at each top-level bank' },
+        rationale: `Three proven ${child.label} blocks form a balanced address hierarchy. The high address trit routes packed read/idle/write action and chooses the corresponding six-lane read path.`,
+        validation: 'Shares the direct accelerated memory read/write/reset sequence suite; invalid or unresolved addressing cannot select a child bank.',
+      },
+    };
+    customComponents.set(id, meta); registerCustom(meta); structuralReferences.set(`structural-memory${locations}x6-v1`, meta); verifyStructuralReference(meta);
+    if (!loadDemo) return { [`structural-memory${locations}x6-v1`]: meta };
+    rootCircuit.clear(); rootCircuit.addComponent(meta.type, 0, 0, { label }); renderer.select(null); renderLibrary(); updateStats(); resetHistory();
+    setStatus(`Structural Memory ${locations}×6 loaded. Open internals to inspect its three-bank balanced address hierarchy.`);
+    return { [`structural-memory${locations}x6-v1`]: meta };
   }
 
   function buildStructuralRoutingDemo(loadDemo = true) {

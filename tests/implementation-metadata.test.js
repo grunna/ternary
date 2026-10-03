@@ -12,7 +12,7 @@ for (const definition of registry.definitions.values()) {
   assert(modes.has(definition.implementation.mode), definition.type + ' has an invalid implementation classification');
 }
 
-for (const type of ['negate', 'compare', 'select3', 'route3', 'adjust3', 'control3', 'min', 'max', 'normalize-carry', 'latch3', 'register3', 'register-bank3']) {
+for (const type of ['negate', 'compare', 'select3', 'route3', 'adjust3', 'control3', 'min', 'max', 'normalize-carry', 'latch3', 'register3', 'register-bank3', 'memory3x1', 'memory3x6', 'memory9x6', 'memory27x6', 'memory81x6']) {
   const implementation = registry.get(type).implementation;
   assert.strictEqual(implementation.mode, 'accelerated-equivalent', type + ' must be an accelerated equivalent');
   assert.match(implementation.structuralImplementation || '', /^structural-[a-z0-9-]+-v1$/, type + ' must name a structural implementation');

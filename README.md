@@ -197,7 +197,7 @@ Choose **1-trit signed display decoder** for the smallest open decoder. Its sole
 
 Choose **3-trit signed display decoder** to load an opening fixed-range experiment. Its inputs have weights `9`, `3` and `1`; the 19 words for `-9 … +9` show a signed decimal digit, while the eight remaining three-trit words are blank. Its gate-level mapping has been checked across all 27 input words. Open the component to inspect the full gate network: three level detectors, exact-match MIN chains, and MAX trees for each segment.
 
-**First CPU word decision:** the first CPU uses six balanced trits, covering `−364 … +364` (729 states). It is deliberately small enough to keep the first register, ALU and display experiments open and understandable.
+**First CPU word decision:** the first CPU word is one **tryte**: six balanced trits covering `−364 … +364` (729 states). It is deliberately small enough to keep the first register, ALU and display experiments open and understandable. A **trit** is one balanced ternary digit; a **memory location** holds one addressed tryte. We deliberately do not use “byte”, which specifically means eight binary bits.
 
 **Native multi-trit display decision:** CPU words are shown directly as a row of `−`, `0` and `+` glyphs, one per trit with the most-significant trit on the left. For example, `+ 0 −` means `(+1 × 9) + (0 × 3) + (−1 × 1) = +8`. This has no separate sign trit and requires no number conversion. Balanced-ternary-to-decimal rendering is deliberately not built into the debugger: a user who wants it can build an explicit converter and connect multiple 7-segment displays.
 
@@ -273,7 +273,13 @@ The library distinguishes three things that can otherwise look alike: **User I/O
 
 **RGB Display 24×24** has two experimental I/O profiles. Both store 24×24 pixels with three six-trit RGB words per pixel (18 trits): **addressed** accepts two four-trit coordinates and writes one selected pixel; **raster stream** uses only one ternary `data` wire and one `clock` wire. Eighteen clocked trits (`R5…R0`, `G5…G0`, `B5…B0`) write the next raster pixel. They are named accelerated display references, so their large frame is visible and testable without pretending it is already an expanded structural panel.
 
-The future memory-mapped display adapter will use the same balanced address, six-trit data, ternary read/idle/write action, clock and reset contract as CPU memory. Its serial-data register turns each six-trit CPU write into six display trits; three writes produce one RGB pixel. This remains a documented interface until Phase 17 fixes memory timing and status/read semantics.
+The future memory-mapped display adapter uses the same balanced address, six-trit data, ternary read/idle/write action, clock and reset contract as CPU memory. Its serial-data register turns each six-trit CPU write into six display trits; three writes produce one RGB pixel.
+
+**Memory contract:** `action=−1` reads the addressed value combinatorially after propagation settles; `action=0` is idle; `action=+1` writes known data to a known address only on `clock: 0 → +1`. `reset=+1` on that edge resets every location and has priority. Memory begins unresolved until reset; invalid, unknown or floating access never changes stored state and produces `?` instead of a guessed read value.
+
+**Memory 3×1** is the first reusable memory block under *State & timing*. It has three addressed ternary locations. Its native evaluator is linked to **Memory 3×1 — structural**; select the block and use **Open structural implementation**, then **Open internals**, to inspect the three structural registers, address decoder, action-gated write paths and `Select3` read path.
+
+**Memory 3×6** stores three complete trytes, one per memory location. One valid write edge updates all six lanes together. Its contract test writes and reads every one of the 729 trytes at all three addresses (2,187 word transactions), and a `6-trit word probe` or `6-trit word display` can be connected directly to `dataOut5…dataOut0` for inspection.
 
 ## Register bank
 
