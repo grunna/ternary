@@ -11,6 +11,9 @@ const buttonDefinition = registry.get('input-button3');
 const joystickDefinition = registry.get('input-joystick3');
 const analogJoystickDefinition = registry.get('input-joystick6');
 const wordDisplayDefinition = registry.get('word-display6');
+const tritLedDefinition = registry.get('trit-led');
+const binaryLedDefinition = registry.get('binary-led');
+const wordProbeDefinition = registry.get('word-probe6');
 const decimalDebugDefinition = registry.get('decimal-debug6');
 
 assert.strictEqual(inputDefinition.implementation.mode, 'external-adapter', 'interactive trit input must remain an external adapter');
@@ -21,6 +24,12 @@ assert.strictEqual(buttonDefinition.implementation.mode, 'external-adapter', 'in
 assert.deepStrictEqual(joystickDefinition.outputs, ['x', 'y'], 'joystick must expose independent x and y axes');
 assert.deepStrictEqual(analogJoystickDefinition.outputs, ['x5', 'x4', 'x3', 'x2', 'x1', 'x0', 'y5', 'y4', 'y3', 'y2', 'y1', 'y0'], 'analog joystick must expose two ordered six-trit axes');
 assert.strictEqual(wordDisplayDefinition.implementation.status, 'user I/O word display boundary', 'word display must declare its end-user display role');
+assert.strictEqual(tritLedDefinition.implementation.status, 'user I/O indicator boundary', 'trit LED must declare its end-user indicator role');
+assert.strictEqual(binaryLedDefinition.implementation.status, 'user I/O binary indicator boundary', 'binary LED must declare its two-terminal indicator role');
+assert.strictEqual(wordProbeDefinition.implementation.status, 'debug word observer boundary', 'word probe must declare its debug-only observer role');
+assert.deepStrictEqual(tritLedDefinition.outputs, [], 'trit LED must not feed a value back into the circuit');
+assert.deepStrictEqual(binaryLedDefinition.outputs, [], 'binary LED must not feed a value back into the circuit');
+assert.deepStrictEqual(wordProbeDefinition.outputs, [], 'word probe must not feed a value back into the circuit');
 assert.strictEqual(decimalDebugDefinition.implementation.status, 'debug decimal observer boundary', 'decimal debug view must declare its debug-only role');
 assert.deepStrictEqual(decimalDebugDefinition.outputs, [], 'decimal debug view must not feed a value back into the circuit');
 
@@ -47,6 +56,32 @@ const display = displayCircuit.addComponent('word-display6', 100, 0);
 });
 displayCircuit.simulate();
 assert.deepStrictEqual(display.state.values, [-1, 0, 1, FLOATING, UNKNOWN, -1], 'word display must sample every known, floating, and unknown lane without changing it');
+
+const ledCircuit = new Circuit(registry);
+const ledSource = ledCircuit.addComponent('trit-input', 0, 0, { value: -1 });
+const led = ledCircuit.addComponent('trit-led', 100, 0);
+ledCircuit.connect(ledSource.id, 'out', led.id, 'in');
+ledCircuit.simulate();
+assert.strictEqual(led.state.value, -1, 'trit LED must observe its input without changing it');
+
+for (const [value, lit] of [[-1, true], [0, false], [1, true], [FLOATING, false], [UNKNOWN, false]]) {
+  const binaryLedCircuit = new Circuit(registry);
+  const source = binaryLedCircuit.addComponent('trit-input', 0, 0, { value });
+  const binaryLed = binaryLedCircuit.addComponent('binary-led', 100, 0);
+  binaryLedCircuit.connect(source.id, 'out', binaryLed.id, 'in');
+  binaryLedCircuit.simulate();
+  assert.strictEqual(binaryLed.state.lit, lit, `binary LED must be ${lit ? 'on' : 'off'} for ${String(value)}`);
+  assert.strictEqual(binaryLed.state.value, value, 'binary LED must preserve the sampled diagnostic state');
+}
+
+const wordProbeCircuit = new Circuit(registry);
+const wordProbe = wordProbeCircuit.addComponent('word-probe6', 100, 0);
+[-1, 0, 1, FLOATING, UNKNOWN, -1].forEach((value, index) => {
+  const source = wordProbeCircuit.addComponent('trit-input', 0, 0, { value });
+  wordProbeCircuit.connect(source.id, 'out', wordProbe.id, ['t5', 't4', 't3', 't2', 't1', 't0'][index]);
+});
+wordProbeCircuit.simulate();
+assert.deepStrictEqual(wordProbe.state.values, [-1, 0, 1, FLOATING, UNKNOWN, -1], 'word probe must observe every lane including Z and ?');
 
 const decimalCircuit = new Circuit(registry);
 const decimalDebug = decimalCircuit.addComponent('decimal-debug6', 100, 0);

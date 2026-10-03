@@ -18,7 +18,7 @@
 
   const simulation = { mode: 'run', previousMode: 'run', timer: null, generatorTimer: null, generatorLastTick: performance.now(), activeUnsubscribers: [] };
 
-  const UTILITY_PRIMITIVES = ['trit-input', 'word-input6', 'input-button3', 'input-joystick3', 'input-joystick6', 'ternary-reference', 'sequence-generator', 'latch3', 'register3', 'register-bank3', 'seven-segment-display', 'word-display6', 'decimal-debug6', 'probe'];
+  const UTILITY_PRIMITIVES = ['trit-input', 'word-input6', 'input-button3', 'input-joystick3', 'input-joystick6', 'ternary-reference', 'sequence-generator', 'latch3', 'register3', 'register-bank3', 'seven-segment-display', 'trit-led', 'binary-led', 'word-display6', 'pixel-display3', 'rgb-display24-addressed', 'rgb-display24-stream', 'word-probe6', 'decimal-debug6', 'probe'];
   const EXPERIMENTAL_PRIMITIVES = ['negate', 'compare', 'select3', 'route3', 'adjust3', 'control3', 'threshold3', 'restore3', 'pass3', 'merge3', 'ternary-reference', 'storage-node3', 'clock-phase3', 'min', 'max', 'normalize-carry'];
   const PRIMITIVE_SETS = {
     all: { label: 'All candidates', description: 'Expose every current ternary primitive candidate.', types: [...EXPERIMENTAL_PRIMITIVES], metadata: { purpose: 'exploration', logicalCostModel: 'sum primitive node costs' } },
@@ -27,8 +27,8 @@
     arithmetic: { label: 'Arithmetic core', description: 'Small set focused on balanced-ternary arithmetic experiments.', types: ['negate', 'compare', 'adjust3', 'normalize-carry'], metadata: { purpose: 'arithmetic', logicalCostModel: 'sum primitive node costs' } },
   };
   const PRIMITIVE_GROUPS = [
-    { label: 'User I/O peripherals', types: ['input-button3', 'input-joystick3', 'input-joystick6', 'seven-segment-display', 'word-display6'] },
-    { label: 'Test, debug & internal sources', types: ['trit-input', 'word-input6', 'ternary-reference', 'sequence-generator', 'probe', 'decimal-debug6'] },
+    { label: 'User I/O peripherals', types: ['input-button3', 'input-joystick3', 'input-joystick6', 'seven-segment-display', 'trit-led', 'binary-led', 'word-display6', 'pixel-display3', 'rgb-display24-addressed', 'rgb-display24-stream'] },
+    { label: 'Test, debug & internal sources', types: ['trit-input', 'word-input6', 'ternary-reference', 'sequence-generator', 'probe', 'word-probe6', 'decimal-debug6'] },
     { label: 'Logic & signal shaping', types: ['negate', 'min', 'max', 'threshold3', 'restore3', 'pass3', 'merge3'] },
     { label: 'Compare & routing', types: ['compare', 'select3', 'route3', 'control3'] },
     { label: 'Arithmetic', types: ['adjust3', 'normalize-carry'] },
@@ -128,10 +128,13 @@
     const definition = registry.get(component.type);
     const visual = component.type === 'seven-segment-display' || component.type === 'component-seven-segment-display' || definition.visual?.kind === 'seven-segment';
     const wordDisplay = component.type === 'word-display6';
+    const wordProbe = component.type === 'word-probe6';
+    const pixelDisplay = component.type === 'pixel-display3';
+    const rgbDisplay = component.type === 'rgb-display24-addressed' || component.type === 'rgb-display24-stream';
     const decimalDebug = component.type === 'decimal-debug6';
-    const width = visual ? 240 : wordDisplay ? 260 : decimalDebug ? 250 : component.type === 'select3' ? 170 : 150;
+    const width = visual ? 240 : wordDisplay ? 260 : wordProbe ? 230 : pixelDisplay ? 270 : rgbDisplay ? 320 : decimalDebug ? 250 : component.type === 'select3' ? 170 : 150;
     const rows = Math.max(definition.inputs.length, definition.outputs.length, 1);
-    return { width, height: Math.max(visual ? 240 : wordDisplay || decimalDebug ? 200 : 78, 48 + rows * 24) };
+    return { width, height: Math.max(visual ? 240 : wordDisplay || wordProbe || pixelDisplay || decimalDebug ? 210 : rgbDisplay ? 570 : 78, 48 + rows * 24) };
   }
 
   function autoLayoutCircuit() {
@@ -407,6 +410,15 @@
       const x = Number(component.state.x), y = Number(component.state.y);
       const axisText = (value) => value === 'Z' ? 'Z' : value === null || value === undefined ? '?' : Number.isFinite(Number(value)) ? String(Math.round(Number(value))) : '?';
       extra += `<details class="layout-editor" open><summary>Analog 6-trit joystick</summary><span>Current external state: x = ${axisText(component.state.x)} · y = ${axisText(component.state.y)}</span><div class="field-grid"><label class="editor-field">X (−364 … +364)<input id="analogJoystickX" type="number" min="-364" max="364" step="1" value="${Number.isFinite(x) ? x : 0}" /></label><label class="editor-field">Y (−364 … +364)<input id="analogJoystickY" type="number" min="-364" max="364" step="1" value="${Number.isFinite(y) ? y : 0}" /></label></div><div class="selection-actions"><button id="applyAnalogJoystickBtn" type="button">Set position</button><button id="centerAnalogJoystickBtn" type="button">Center</button></div><span>Drag the pad on the block for analog input. The center 12% radius is a dead zone; X/Y are quantized to six balanced trits each.</span></details>`;
+    }
+    if (component.type === 'pixel-display3') {
+      const pixels = Array.isArray(component.state.pixels) ? component.state.pixels.slice(0, 9).map(trit) : Array(9).fill(0);
+      const glyph = (value) => value === null ? '?' : value === 'Z' ? 'Z' : value < 0 ? '−' : value > 0 ? '+' : '0';
+      const classFor = (value) => value === null ? 'unknown' : value === 'Z' ? 'floating' : value < 0 ? 'negative' : value > 0 ? 'positive' : 'zero';
+      const coordinates = [[-1, 1], [0, 1], [1, 1], [-1, 0], [0, 0], [1, 0], [-1, -1], [0, -1], [1, -1]];
+      const cells = pixels.map((value, index) => `<span class="pixel-frame-cell ${classFor(value)}" title="x=${coordinates[index][0]}, y=${coordinates[index][1]}: ${fmt(value)}">${glyph(value)}</span>`).join('');
+      const diagnostic = component.state.invalidIo ? `<p class="pixel-frame-error">Invalid I/O: ${esc(component.state.invalidIo)}</p>` : '<p class="pixel-frame-ok">No current I/O error.</p>';
+      extra += `<details class="layout-editor pixel-display-inspector" open><summary>Pixel frame &amp; I/O contract</summary><div class="pixel-frame-grid" role="img" aria-label="Current 3 by 3 ternary pixel frame; top row is y plus one">${cells}</div>${diagnostic}<p><strong>Coordinates:</strong> x: −1 / 0 / +1 = left / centre / right; y: +1 / 0 / −1 = top / centre / bottom.</p><p><strong>Clock:</strong> every known <code>0 → +1</code> edge stores <code>color</code> at the current address. <code>color=0</code> erases one pixel.</p><p><strong>Reset:</strong> <code>reset=+1</code> on that edge clears all nine pixels and has priority. <code>Z</code>, <code>?</code>, or unsupported controls never change the frame.</p></details>`;
     }
     if (component.type === 'sequence-generator') {
       const sequence = normalizeSequence(component.state.sequence);
@@ -1181,7 +1193,13 @@
       merge3: 'one driven path or Z; contention → ?',
       'storage-node3': 'ideal gated ternary storage node',
       'seven-segment-display': '8 inputs: A–G + sign; 0 = off, +1 = on',
+      'trit-led': 'user I/O: visible one-trit LED',
+      'binary-led': 'user I/O: ±1 = on, 0 = off; Z / ? flag invalid wiring',
       'word-display6': 'user I/O: visible − / 0 / + word lanes',
+      'pixel-display3': 'user I/O: clocked 3×3 ternary frame',
+      'rgb-display24-addressed': 'user I/O: 18-trit RGB, four-trit x/y, clocked writes',
+      'rgb-display24-stream': 'user I/O: serial RGB data + clock; 18 trits per pixel',
+      'word-probe6': 'debug observer: read six ordered trits',
       'decimal-debug6': 'debug only: inspect a six-trit word as decimal',
       probe: 'debug observer: read a trit',
     };

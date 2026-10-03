@@ -383,6 +383,16 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .implementation-label { color: #d5eaff; font-weight: 700; }
 .implementation-reference { color: #b9e4d3; }
 .cost-note { margin-top: 10px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; font-size: 11px; color: var(--muted); }
+.pixel-display-inspector p { margin: 8px 0 0; }
+.pixel-frame-grid { display: grid; grid-template-columns: repeat(3, 34px); gap: 5px; width: max-content; margin: 10px auto 4px; padding: 7px; border: 1px solid var(--border); border-radius: 8px; background: #0a0d12; }
+.pixel-frame-cell { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid #354453; border-radius: 6px; font: 700 16px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.pixel-frame-cell.negative { background: #6a3037; color: #ffe2e4; }
+.pixel-frame-cell.zero { background: #151d26; color: #8a97a3; }
+.pixel-frame-cell.positive { background: #1d5b4c; color: #d9fff4; }
+.pixel-frame-cell.floating { background: #5f4523; color: #ffe2b7; }
+.pixel-frame-cell.unknown { background: #4d3b65; color: #eadcff; }
+.pixel-frame-ok { color: #83d7be; }
+.pixel-frame-error { color: #f0a8ad; }
 
 /* Project persistence controls */
 .project-picker select,

@@ -263,6 +263,18 @@ The library distinguishes three things that can otherwise look alike: **User I/O
 
 **6-trit decimal debug view** is not a peripheral or structural conversion component. It is a test/debug observer that quickly shows a settled known `t5…t0` word as its decimal value (`−364 … +364`). It shows an invalid marker when any lane is `Z` or `?` and has no output back into the circuit.
 
+**Trit LED** is a one-trit end-user indicator. It visibly samples `−1`, `0`, `+1`, `Z` or `?` without driving the circuit. **6-trit word probe** is its compact debug counterpart: it shows all six word lanes for diagnosis and has no circuit output.
+
+**Binary LED** is a separate two-terminal LED module: both `−1` and `+1` turn it on, while `0` turns it off. `Z` and `?` are not physical LED states; the editor flags them as invalid wiring so they can be corrected.
+
+**Pixel Display 3×3 contract:** the first clocked display has ternary `x`, `y` and `color` ports plus `clock` and `reset`. `x = −1/0/+1` chooses left/centre/right; `y = +1/0/−1` chooses top/centre/bottom. Every known `0 → +1` clock edge writes the known `color` trit; `color=0` erases one pixel. `reset=+1` on that same edge clears the whole frame and has priority. `Z`, `?`, or unsupported `−1` control values never modify pixels and are reported as invalid I/O.
+
+**Pixel Display 3×3** is now available under *User I/O peripherals*. Connect its five ports and use a `Clock` or `Sequence generator` to make the required `0 → +1` edge. Its 3×3 frame stores the written ternary pixel values privately; it never drives a circuit signal back out.
+
+**RGB Display 24×24** has two experimental I/O profiles. Both store 24×24 pixels with three six-trit RGB words per pixel (18 trits): **addressed** accepts two four-trit coordinates and writes one selected pixel; **raster stream** uses only one ternary `data` wire and one `clock` wire. Eighteen clocked trits (`R5…R0`, `G5…G0`, `B5…B0`) write the next raster pixel. They are named accelerated display references, so their large frame is visible and testable without pretending it is already an expanded structural panel.
+
+The future memory-mapped display adapter will use the same balanced address, six-trit data, ternary read/idle/write action, clock and reset contract as CPU memory. Its serial-data register turns each six-trit CPU write into six display trits; three writes produce one RGB pixel. This remains a documented interface until Phase 17 fixes memory timing and status/read semantics.
+
 ## Register bank
 
 **Ternary register bank** demo provides three stored trits addressed by `-1 / 0 / +1`. Its action input is `-1 = read`, `0 = idle`, `+1 = write`; a write occurs on the clock rising edge when action is `+1`.

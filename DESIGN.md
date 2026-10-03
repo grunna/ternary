@@ -55,6 +55,43 @@ Every adapter declares its ports, state ownership, clock/reset policy and visual
 An input button is a two-state external adapter, not a generic trit source: it declares two distinct known released and pressed trit values (default `0` and `+1`) plus momentary, toggle or pulse behavior. A momentary button drives the pressed level while the pointer is held; toggle changes state on each press; a pulse drives the pressed level for its declared external duration (120 ms by default). A joystick is two independent ternary axes, `x` and `y`, each `-1 / 0 / +1`; this directly represents center, cardinal directions and diagonals. The future computer console is a top-level composition of these peripherals, a drillable Computer component and visual outputs. Its `Run computer`, step and reset controls operate the public computer clock/reset contract and remain distinct from simulator propagation controls.
 
 The opening analog joystick uses the current CPU word width: six balanced trits for `x` and six for `y`, giving `−364 … +364` independently on each axis (12 output trits in total). It therefore connects directly to current word-level components with no hidden scaling. A later high-resolution design must state width **per axis** — for example, 12 trits per axis means 24 output trits total — and add an explicit conversion adapter if the CPU word remains six trits.
+
+### Opening `Pixel Display 3×3` contract
+
+The first pixel peripheral is intentionally small enough to exhaustively test. It owns a 3×3 frame of ternary pixel values and has no circuit outputs. Its public ports are `x`, `y`, `color`, `clock` and `reset`.
+
+| Port | Values and meaning |
+| --- | --- |
+| `x` | Known `−1 / 0 / +1` selects left / centre / right. |
+| `y` | Known `+1 / 0 / −1` selects top / centre / bottom, preserving ordinary Cartesian orientation. |
+| `color` | The ternary value stored in the addressed pixel: `−1` is the negative-color swatch, `0` is off/black, and `+1` is the positive-color swatch. The exact screen colours are visual mapping only; all three stored values remain distinct. |
+| `clock` | Every known rising edge `0 → +1` writes the current known x, y and color values. All other transitions are observational only. A pixel is erased by writing `color=0`, not by a special erase command. |
+| `reset` | `+1` on a known rising clock edge clears all nine pixels to `0` and takes priority over `write`. `0` permits normal operation. `−1`, `Z` and `?` are invalid controls and must not alter the frame. |
+
+At a rising edge with `reset=0`, x, y and color must be known supported values. If an address, color or control is `Z` or `?`, or `reset` is `−1`, the frame remains unchanged and the peripheral records an explicit invalid-I/O diagnostic for Inspector and the visual bezel. A valid `reset=+1` edge ignores address and color because reset has priority. There is no silent address selection, stale-data write or implicit clear. Reset is synchronous; changing `reset` between clock edges does not modify pixels. This contract is the future memory-mapped display boundary as well: a later bus adapter must translate its public memory/I/O transaction into these same sampled ports rather than bypassing the device state.
+
+### Experimental 24×24 RGB display profiles
+
+The two 24×24 RGB peripherals are named accelerated I/O references, not a claim that a 576-pixel panel has been structurally expanded in the editor. Each pixel stores three independent six-trit balanced words: red, green and blue. This is 18 trits of pixel data, preserving the current CPU word width per channel without a binary colour bus.
+
+`RGB Display 24×24 — addressed` has four-trit `x3…x0` and `y3…y0` coordinates, 18 RGB data inputs, `clock` and `reset`. Only coordinate values `−12 … +11` are valid: x grows left-to-right and y grows bottom-to-top. Its physical row mapping puts `(−12,+11)` at top-left. Every known `0 → +1` edge updates the addressed pixel.
+
+`RGB Display 24×24 — raster stream` is a two-wire serial interface: one ternary `data` input and one `clock` input. Each known `0 → +1` edge captures one trit. Exactly 18 captured trits, in `R5…R0, G5…G0, B5…B0` order, form the next pixel and advance the private raster cursor; the cursor wraps after pixel 575. The opening serial profile deliberately has no reset, address or frame-start pin: a complete 576-pixel stream is self-aligned from its creation point and subsequent full frames overwrite the same raster order. A future physical transport profile may add an explicit framing/escape protocol if it needs recovery after an interrupted stream. Invalid clock or data is diagnosed and never modifies the frame.
+
+### Future memory-mapped display adapter
+
+The adapter is deferred until the Phase 17 memory-port timing is fixed, but its public boundary is fixed now: it uses the same balanced `address`, six-trit `data`, ternary `action`, `clock` and `reset` ports as CPU memory. `action=−1` reads device status, `0` is idle, and `+1` writes the selected device register on a known CPU `0 → +1` edge. No binary write-enable, byte lane or display-only control bus is introduced.
+
+The opening register map fits the first six-trit CPU address range:
+
+| Address | `action=+1` write | `action=−1` read |
+| --- | --- | --- |
+| `−1` | Display command. Data `−1` clears the future transport/frame state; `0` is a no-op; `+1` rewinds the serial packet/raster position without clearing. | Status word: `0` means ready; `?` means the adapter has latched an invalid transaction. |
+| `0` | Serial-data window. The adapter serializes the six trits most-significant first onto the RGB display's `data`/`clock` pair. | Six-trit balanced count `0…17` of trits currently collected for the next 18-trit pixel packet. |
+| `+1` | Reserved for a later explicit framing/transport extension. | Reserved; reads as balanced word `0`. |
+
+Thus one RGB pixel takes three ordinary CPU writes to address `0`: R word, then G word, then B word. The adapter produces six internal serial display clocks for each CPU data write, and its third write completes the display's 18-trit pixel packet. A full 24×24 frame is 1,728 six-trit CPU writes. The adapter owns this serialization state and exposes only status through the normal memory read action; it must never let an invalid address, action, data or clock partially alter the serial packet or display frame. Its final read latency, wait/ready policy and structural-vs-accelerated implementation remain gated on the Phase 17 memory contract.
+
 | Native multi-trit display | one `− / 0 / +` glyph per trit, most-significant trit first | A CPU value is shown as its balanced-ternary word, without conversion or a separate sign bit. It scales directly from one trit to the fixed six-trit CPU word and keeps every stored state visible. Decimal rendering is intentionally deferred: it is a debugger/peripheral adapter, built from open reusable pieces (word converter, digit decoder and three displays) after multi-trit arithmetic exists. |
 | Decimal display capacity | sign plus three decimal positions | The future decimal peripheral covers the whole first CPU-word range `−364 … +364`; its unused capacity up to 999 is acceptable. It is not an architectural reason to widen the CPU word. |
 

@@ -284,13 +284,13 @@ I/O components are explicit external adapters: they consume or produce public te
 - [ ] Defer higher-resolution joystick axes until a wider word interface is justified; name width per axis explicitly (for example 12 trits per axis, not an ambiguous “12-trit joystick”)
 - [x] Build a native 6-trit word output with one visible `− / 0 / +` glyph per lane and explicit unknown/floating presentation
 - [x] Add a non-structural 6-trit decimal debug observer for quick inspection of settled known words
-- [ ] Package LED/probe-style trit and word outputs as reusable external adapters
-- [ ] Define the opening pixel-display port contract: balanced `x`, `y`, colour/data, write, clock and reset
-- [ ] Build a small `Pixel Display 3×3` peripheral with ternary coordinates and explicit pixel-state update semantics
-- [ ] Test every pixel address, colour, write/reset sequence and invalid/unknown/floating input behavior
-- [ ] Let the pixel display expose its current frame and drill into its public I/O contract from Inspector
-- [ ] Build larger displays only by documented composition or a named accelerated reference
-- [ ] Define a future memory-mapped display adapter using the same public memory/I/O conventions as the CPU
+- [x] Package LED/probe-style trit and word outputs as reusable external adapters
+- [x] Define the opening pixel-display port contract: balanced `x`, `y`, colour/data, clock and reset
+- [x] Build a small `Pixel Display 3×3` peripheral with ternary coordinates and explicit pixel-state update semantics
+- [x] Test every pixel address, colour, write/reset sequence and invalid/unknown/floating input behavior
+- [x] Let the pixel display expose its current frame and drill into its public I/O contract from Inspector
+- [x] Build larger displays only by documented composition or a named accelerated reference: 24×24 RGB addressed and two-wire serial raster-stream profiles, each storing six-trit R/G/B channels
+- [x] Define a future memory-mapped display adapter using the same public memory/I/O conventions as the CPU
 
 ## Phase 17 — Structural ternary memory
 

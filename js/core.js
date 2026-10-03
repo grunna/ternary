@@ -20,6 +20,15 @@
     }
     return remaining === 0 ? digits : null;
   };
+  const balancedWordValue = (values) => values.every(isKnownTrit) ? values.reduce((total, value) => total * 3 + trit(value), 0) : null;
+  const RGB_WORD_PORTS = ['r5', 'r4', 'r3', 'r2', 'r1', 'r0', 'g5', 'g4', 'g3', 'g2', 'g1', 'g0', 'b5', 'b4', 'b3', 'b2', 'b1', 'b0'];
+  const RGB_DISPLAY_SIZE = 24;
+  const emptyRgbFrame = () => Array.from({ length: RGB_DISPLAY_SIZE * RGB_DISPLAY_SIZE }, () => [0, 0, 0]);
+  const rgbInput = (inputs) => ({
+    r: balancedWordValue(['r5', 'r4', 'r3', 'r2', 'r1', 'r0'].map((name) => trit(inputs[name]))),
+    g: balancedWordValue(['g5', 'g4', 'g3', 'g2', 'g1', 'g0'].map((name) => trit(inputs[name]))),
+    b: balancedWordValue(['b5', 'b4', 'b3', 'b2', 'b1', 'b0'].map((name) => trit(inputs[name]))),
+  });
 
   // A declared state boundary retains a value between evaluations. Its output can
   // therefore feed a later combinational path back to its input without making the
@@ -739,7 +748,117 @@
     },
   });
   registry.register({ type: 'seven-segment-display', label: '7-segment display', category: 'output', inputs: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'sign'], outputs: [], cost: { logical: { nodes: 0, depth: 0 } }, evaluate() { return {}; } });
+  registry.register({ type: 'trit-led', label: 'Trit LED', category: 'output', inputs: ['in'], outputs: [], defaultState: { value: UNKNOWN }, cost: { logical: { nodes: 0, depth: 0 } }, evaluate(c) { c.state.value = trit(c.inputs.in); return {}; } });
+  registry.register({ type: 'binary-led', label: 'Binary LED', category: 'output', inputs: ['in'], outputs: [], defaultState: { value: UNKNOWN, lit: false }, cost: { logical: { nodes: 0, depth: 0 } }, evaluate(c) { const value = trit(c.inputs.in); c.state.value = value; c.state.lit = isKnownTrit(value) && value !== 0; return {}; } });
   registry.register({ type: 'word-display6', label: '6-trit word display', category: 'output', inputs: ['t5', 't4', 't3', 't2', 't1', 't0'], outputs: [], defaultState: { values: [UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN] }, cost: { logical: { nodes: 0, depth: 0 } }, evaluate(c) { c.state.values = ['t5', 't4', 't3', 't2', 't1', 't0'].map((name) => trit(c.inputs[name])); return {}; } });
+  registry.register({
+    type: 'pixel-display3', label: 'Pixel Display 3×3', category: 'output', breaksCombinationalPath: true,
+    inputs: ['x', 'y', 'color', 'clock', 'reset'], outputs: [],
+    defaultState: { pixels: Array(9).fill(0), previousClock: 0, invalidIo: null },
+    cost: { logical: { nodes: 0, depth: 0 } },
+    evaluate(c, { circuit }) {
+      const clock = trit(c.inputs.clock), staged = circuit.getStagedState(c.id);
+      const previousClock = trit(staged.previousClock);
+      const knownClock = clock === 0 || clock === 1;
+      const patch = { previousClock: clock };
+      if (!knownClock) {
+        patch.invalidIo = `clock=${clock === 'Z' ? 'Z' : clock === null ? '?' : '−1'} is not a valid 0/+1 clock level`;
+        circuit.stageStateCommit(c.id, patch);
+        return {};
+      }
+      const risingEdge = previousClock === 0 && clock === 1;
+      if (!risingEdge) {
+        circuit.stageStateCommit(c.id, patch);
+        return {};
+      }
+      const reset = trit(c.inputs.reset);
+      if (reset === 1) {
+        patch.pixels = Array(9).fill(0); patch.invalidIo = null;
+      } else if (reset !== 0) {
+        patch.invalidIo = `reset=${reset === 'Z' ? 'Z' : reset === null ? '?' : '−1'} is not supported`;
+      } else {
+        const x = trit(c.inputs.x), y = trit(c.inputs.y), color = trit(c.inputs.color);
+        if (!isKnownTrit(x) || !isKnownTrit(y) || !isKnownTrit(color)) {
+          const display = (value) => value === 'Z' ? 'Z' : value === null ? '?' : value === -1 ? '−1' : String(value);
+          patch.invalidIo = `invalid pixel ports: x=${display(x)} y=${display(y)} color=${display(color)}`;
+        } else {
+          const pixels = (Array.isArray(staged.pixels) ? staged.pixels : Array(9).fill(0)).slice(0, 9).map(trit);
+          const column = x + 1, row = 1 - y;
+          pixels[row * 3 + column] = color;
+          patch.pixels = pixels; patch.invalidIo = null;
+        }
+      }
+      circuit.stageStateCommit(c.id, patch);
+      return {};
+    },
+  });
+  const evaluateAddressedRgbDisplay24 = (c, { circuit }) => {
+    const clock = trit(c.inputs.clock), staged = circuit.getStagedState(c.id), previousClock = trit(staged.previousClock);
+    const patch = { previousClock: clock };
+    if (![0, 1].includes(clock)) {
+      patch.invalidIo = `clock=${clock === 'Z' ? 'Z' : clock === null ? '?' : '−1'} is not a valid 0/+1 clock level`;
+      circuit.stageStateCommit(c.id, patch); return {};
+    }
+    if (!(previousClock === 0 && clock === 1)) {
+      circuit.stageStateCommit(c.id, patch); return {};
+    }
+    const reset = trit(c.inputs.reset);
+    if (reset === 1) {
+      patch.pixels = emptyRgbFrame(); patch.cursor = 0; patch.invalidIo = null;
+      circuit.stageStateCommit(c.id, patch); return {};
+    }
+    if (reset !== 0) {
+      patch.invalidIo = `reset=${reset === 'Z' ? 'Z' : reset === null ? '?' : '−1'} is not supported`;
+      circuit.stageStateCommit(c.id, patch); return {};
+    }
+    const rgb = rgbInput(c.inputs);
+    if ([rgb.r, rgb.g, rgb.b].some((value) => value === null)) {
+      patch.invalidIo = 'RGB data contains Z or ?'; circuit.stageStateCommit(c.id, patch); return {};
+    }
+    const x = balancedWordValue(['x3', 'x2', 'x1', 'x0'].map((name) => trit(c.inputs[name])));
+    const y = balancedWordValue(['y3', 'y2', 'y1', 'y0'].map((name) => trit(c.inputs[name])));
+    if (x === null || y === null || x < -12 || x > 11 || y < -12 || y > 11) {
+      patch.invalidIo = 'address is unsupported';
+    }
+    else {
+      const pixels = (Array.isArray(staged.pixels) ? staged.pixels : emptyRgbFrame()).map((pixel) => Array.isArray(pixel) ? [...pixel] : [0, 0, 0]);
+      pixels[(11 - y) * 24 + (x + 12)] = [rgb.r, rgb.g, rgb.b]; patch.pixels = pixels; patch.invalidIo = null;
+    }
+    circuit.stageStateCommit(c.id, patch); return {};
+  };
+  registry.register({
+    type: 'rgb-display24-addressed', label: 'RGB Display 24×24 — addressed', category: 'output', breaksCombinationalPath: true,
+    inputs: ['x3', 'x2', 'x1', 'x0', 'y3', 'y2', 'y1', 'y0', ...RGB_WORD_PORTS, 'clock', 'reset'], outputs: [],
+    defaultState: { pixels: emptyRgbFrame(), previousClock: 0, cursor: 0, invalidIo: null }, cost: { logical: { nodes: 0, depth: 0 } },
+    evaluate(c, context) { return evaluateAddressedRgbDisplay24(c, context); },
+  });
+  registry.register({
+    type: 'rgb-display24-stream', label: 'RGB Display 24×24 — raster stream', category: 'output', breaksCombinationalPath: true,
+    inputs: ['data', 'clock'], outputs: [],
+    defaultState: { pixels: emptyRgbFrame(), previousClock: 0, cursor: 0, packet: [], invalidIo: null }, cost: { logical: { nodes: 0, depth: 0 } },
+    evaluate(c, { circuit }) {
+      const clock = trit(c.inputs.clock), staged = circuit.getStagedState(c.id), previousClock = trit(staged.previousClock);
+      const patch = { previousClock: clock };
+      if (![0, 1].includes(clock)) {
+        patch.invalidIo = `clock=${clock === 'Z' ? 'Z' : clock === null ? '?' : '−1'} is not a valid 0/+1 clock level`;
+      } else if (previousClock === 0 && clock === 1) {
+        const data = trit(c.inputs.data);
+        if (!isKnownTrit(data)) patch.invalidIo = `data=${data === 'Z' ? 'Z' : '?'} cannot be part of an RGB packet`;
+        else {
+          const packet = [...(Array.isArray(staged.packet) ? staged.packet : []), data];
+          if (packet.length < 18) { patch.packet = packet; patch.invalidIo = null; }
+          else {
+            const rgb = { r: balancedWordValue(packet.slice(0, 6)), g: balancedWordValue(packet.slice(6, 12)), b: balancedWordValue(packet.slice(12, 18)) };
+            const cursor = Math.max(0, Math.min(575, Number(staged.cursor) || 0));
+            const pixels = (Array.isArray(staged.pixels) ? staged.pixels : emptyRgbFrame()).map((pixel) => Array.isArray(pixel) ? [...pixel] : [0, 0, 0]);
+            pixels[cursor] = [rgb.r, rgb.g, rgb.b]; patch.pixels = pixels; patch.cursor = (cursor + 1) % 576; patch.packet = []; patch.invalidIo = null;
+          }
+        }
+      }
+      circuit.stageStateCommit(c.id, patch); return {};
+    },
+  });
+  registry.register({ type: 'word-probe6', label: '6-trit word probe', category: 'debug', inputs: ['t5', 't4', 't3', 't2', 't1', 't0'], outputs: [], defaultState: { values: [UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN] }, cost: { logical: { nodes: 0, depth: 0 } }, evaluate(c) { c.state.values = ['t5', 't4', 't3', 't2', 't1', 't0'].map((name) => trit(c.inputs[name])); return {}; } });
   registry.register({ type: 'decimal-debug6', label: '6-trit decimal debug view', category: 'debug', inputs: ['t5', 't4', 't3', 't2', 't1', 't0'], outputs: [], defaultState: { values: [UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN], decimal: null }, cost: { logical: { nodes: 0, depth: 0 } }, evaluate(c) { const values = ['t5', 't4', 't3', 't2', 't1', 't0'].map((name) => trit(c.inputs[name])); c.state.values = values; c.state.decimal = values.every(isKnownTrit) ? values.reduce((total, value) => total * 3 + value, 0) : null; return {}; } });
   registry.register({ type: 'probe', label: 'Probe', inputs: ['in'], outputs: [], defaultState: { value: UNKNOWN }, evaluate(c) { c.state.value = trit(c.inputs.in); return {}; } });
   registry.register({ type: 'component-input', label: 'Component Input', inputs: [], outputs: ['out'], defaultState: { name: 'in', value: 0 }, boundary: 'input', evaluate: (c) => ({ out: trit(c.state.value) }) });
@@ -777,7 +896,13 @@
     register3: { mode: 'accelerated-equivalent', status: 'structural reference available', summary: 'Native execution accelerates the named two-latch register.', layers: ['Clock phase inverter', 'load control', 'two structural latches'], structuralImplementation: 'structural-register-v1' },
     'register-bank3': { mode: 'accelerated-equivalent', status: 'structural reference available', summary: 'Native bank execution accelerates the named structural 3×1 bank.', layers: ['Ternary address decoder', 'three structural registers', 'write pass paths', 'Select3 read path'], structuralImplementation: 'structural-register-bank3-v1' },
     'seven-segment-display': { mode: 'external-adapter', status: 'user I/O display boundary', summary: 'An end-user peripheral consumes eight two-state segment-control lines. It is outside the ternary logic hierarchy, not a ternary shortcut.', layers: ['Ternary decoder component', '0 / +1 segment-control boundary', 'Physical/display adapter'] },
+    'trit-led': { mode: 'external-adapter', status: 'user I/O indicator boundary', summary: 'A visible end-user indicator samples one ternary wire and renders −1, 0, +1, Z or ? without driving a signal back into the circuit.', layers: ['One sampled ternary wire', 'Visible trit LED adapter'] },
+    'binary-led': { mode: 'external-adapter', status: 'user I/O binary indicator boundary', summary: 'A two-terminal physical LED module treats either driven ternary polarity (−1 or +1) as on and 0 as off. Z and ? are simulator-visible invalid wiring states, never normal physical LED states.', layers: ['One sampled ternary wire', 'Polarity-independent LED driver', 'Two-terminal physical LED'] },
     'word-display6': { mode: 'external-adapter', status: 'user I/O word display boundary', summary: 'An end-user peripheral observes and renders six ordered ternary word lanes. It shows known, floating and unknown values without contributing logic.', layers: ['Six ternary word wires', 'Visible − / 0 / + / Z / ? display adapter'] },
+    'pixel-display3': { mode: 'external-adapter', status: 'clocked user I/O display boundary', summary: 'A stateful 3×3 ternary pixel peripheral samples x, y, color, clock and reset. A known 0 → +1 edge always writes or synchronously clears its private frame; invalid I/O is visible and never mutates pixels.', layers: ['Ternary x/y/color and control ports', 'Clocked 3×3 peripheral state', 'Visible ternary pixel frame'] },
+    'rgb-display24-addressed': { mode: 'external-adapter', status: 'accelerated 24×24 addressed RGB peripheral', summary: 'A named accelerated display reference stores 24×24 RGB pixels. Each R/G/B channel is a six-trit word; two four-trit coordinates select one pixel on every known clock edge.', layers: ['4-trit x/y coordinates', 'Three six-trit RGB data words', 'Clocked 24×24 frame state'], reference: '24×24 addressed frame reference; larger physical display composition is deferred' },
+    'rgb-display24-stream': { mode: 'external-adapter', status: 'accelerated two-wire 24×24 serial RGB peripheral', summary: 'A named accelerated display reference accepts one ternary data wire and one clock. Every 18 known trits form R5…R0, G5…G0, B5…B0 for the next raster pixel.', layers: ['One ternary serial data wire', 'Known 0 → +1 serial clock', 'Clocked 24×24 frame state'], reference: '24×24 two-wire serial frame reference; larger physical display composition is deferred' },
+    'word-probe6': { mode: 'external-adapter', status: 'debug word observer boundary', summary: 'A compact debug observer samples six ordered ternary word lanes and shows each resolved state without contributing logic or acting as a finished-machine display.', layers: ['Six sampled ternary word wires', 'Debug word readout'] },
     'decimal-debug6': { mode: 'external-adapter', status: 'debug decimal observer boundary', summary: 'A non-structural debug observer converts a settled known six-trit word to decimal for inspection only. It has no circuit output and is not a user-facing hardware peripheral.', layers: ['Six ternary word wires', 'Debug-only decimal readout'] },
     probe: { mode: 'external-adapter', status: 'debug observer boundary', summary: 'Reads a wire without contributing logical behavior or acting as an end-user display.', layers: ['Observation/debug boundary'] },
     'component-input': { mode: 'external-adapter', status: 'module interface boundary', summary: 'Named internal module input to an inspectable reusable circuit; it is not itself an end-user peripheral.', layers: ['Reusable-component input boundary'] },

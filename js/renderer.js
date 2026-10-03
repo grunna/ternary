@@ -59,6 +59,28 @@
     return value === null ? '?' : value === 'Z' ? 'Z' : value < 0 ? '−' : value > 0 ? '+' : '0';
   }
 
+  function drawPixelDisplay(graphics, pixels, invalid) {
+    const pixelColor = (value) => value < 0 ? COLORS.neg : value > 0 ? COLORS.pos : 0x151d26;
+    graphics.clear().roundRect(0, 0, 108, 108, 9).fill(0x0a0d12).stroke({ color: invalid ? COLORS.unknown : 0x485568, width: invalid ? 1.8 : 1 });
+    for (let row = 0; row < 3; row += 1) {
+      for (let column = 0; column < 3; column += 1) {
+        const value = trit(pixels[row * 3 + column]);
+        graphics.roundRect(8 + column * 32, 8 + row * 32, 28, 28, 5).fill(pixelColor(value)).stroke({ color: 0x354453, width: 1 });
+      }
+    }
+  }
+
+  function drawRgbDisplay24(graphics, pixels, invalid) {
+    const channel = (value) => Math.max(0, Math.min(255, Math.round((Number(value) + 364) / 728 * 255)));
+    graphics.clear().roundRect(0, 0, 132, 132, 9).fill(0x0a0d12).stroke({ color: invalid ? COLORS.unknown : 0x485568, width: invalid ? 1.8 : 1 });
+    for (let row = 0; row < 24; row += 1) {
+      for (let column = 0; column < 24; column += 1) {
+        const pixel = Array.isArray(pixels[row * 24 + column]) ? pixels[row * 24 + column] : [0, 0, 0];
+        graphics.rect(6 + column * 5, 6 + row * 5, 5, 5).fill((channel(pixel[0]) << 16) | (channel(pixel[1]) << 8) | channel(pixel[2]));
+      }
+    }
+  }
+
   class CircuitRenderer {
     constructor({ element, circuit, registry, onSelectionChanged, onStatus, onBeforeChange, onAfterChange, onOpenComponent }) {
       this.element = element;
@@ -376,14 +398,17 @@
       const layout = component.state.layout || {};
       const isSevenSegment = component.type === 'seven-segment-display' || component.type === 'component-seven-segment-display' || definition.visual?.kind === 'seven-segment';
       const isWordDisplay = component.type === 'word-display6';
+      const isWordProbe = component.type === 'word-probe6';
+      const isPixelDisplay = component.type === 'pixel-display3';
+      const isRgbDisplay = component.type === 'rgb-display24-addressed' || component.type === 'rgb-display24-stream';
       const isDecimalDebug = component.type === 'decimal-debug6';
-      const defaultWidth = isSevenSegment ? 240 : isWordDisplay ? 260 : isDecimalDebug ? 250 : component.type === 'select3' ? 170 : 150;
+      const defaultWidth = isSevenSegment ? 240 : isWordDisplay ? 260 : isWordProbe ? 230 : isPixelDisplay ? 270 : isRgbDisplay ? 320 : isDecimalDebug ? 250 : component.type === 'select3' ? 170 : 150;
       const width = Math.max(120, Math.min(320, Number(layout.width) || defaultWidth));
       const portSpacing = Math.max(18, Math.min(60, Number(layout.portSpacing) || 24));
       const inputSide = layout.inputSide === 'right' ? 'right' : 'left';
       const outputSide = layout.outputSide === 'left' ? 'left' : 'right';
       const rows = Math.max(definition.inputs.length, definition.outputs.length, 1);
-      const height = Math.max(isSevenSegment ? 240 : isWordDisplay || isDecimalDebug ? 200 : 78, 48 + rows * portSpacing);
+      const height = Math.max(isSevenSegment ? 240 : isWordDisplay || isWordProbe || isPixelDisplay || isDecimalDebug ? 210 : isRgbDisplay ? 570 : 78, 48 + rows * portSpacing);
       const container = new PIXI.Container();
       container.position.set(component.x, component.y);
       container.eventMode = 'static';
@@ -423,6 +448,45 @@
           glyph.anchor.set(0.5); glyph.position.set(12 + index * 19, 23); wordDisplay.glyphs.push(glyph); wordDisplay.addChild(glyph);
         }
         container.addChild(wordDisplay);
+      }
+      let tritLed = null;
+      if (component.type === 'trit-led' || component.type === 'binary-led') {
+        tritLed = new PIXI.Container();
+        tritLed.position.set(width - 44, 30);
+        const bezel = new PIXI.Graphics();
+        const lamp = new PIXI.Graphics();
+        const text = new PIXI.Text({ text: '?', style: { fill: COLORS.unknown, fontSize: 12, fontWeight: '700', fontFamily: 'monospace' } });
+        text.anchor.set(0.5); text.position.set(20, 21);
+        tritLed.addChild(bezel, lamp, text); tritLed._bezel = bezel; tritLed._lamp = lamp; tritLed._text = text;
+        container.addChild(tritLed);
+      }
+      let wordProbe = null;
+      if (isWordProbe) {
+        wordProbe = new PIXI.Container();
+        wordProbe.position.set(width - 130, 43);
+        const bezel = new PIXI.Graphics();
+        wordProbe.addChild(bezel); wordProbe._bezel = bezel; wordProbe.glyphs = [];
+        for (let index = 0; index < 6; index += 1) {
+          const glyph = new PIXI.Text({ text: '?', style: { fill: COLORS.unknown, fontSize: 16, fontWeight: '700', fontFamily: 'monospace' } });
+          glyph.anchor.set(0.5); glyph.position.set(12 + index * 19, 23); wordProbe.glyphs.push(glyph); wordProbe.addChild(glyph);
+        }
+        container.addChild(wordProbe);
+      }
+      let pixelDisplay = null;
+      if (isPixelDisplay) {
+        pixelDisplay = new PIXI.Container();
+        pixelDisplay.position.set(width - 122, 43);
+        const frame = new PIXI.Graphics();
+        pixelDisplay.addChild(frame); pixelDisplay._frame = frame;
+        container.addChild(pixelDisplay);
+      }
+      let rgbDisplay = null;
+      if (isRgbDisplay) {
+        rgbDisplay = new PIXI.Container();
+        rgbDisplay.position.set(width - 148, 43);
+        const frame = new PIXI.Graphics();
+        rgbDisplay.addChild(frame); rgbDisplay._frame = frame;
+        container.addChild(rgbDisplay);
       }
       let decimalReadout = null;
       if (isDecimalDebug) {
@@ -635,7 +699,7 @@
       container.on('pointerupoutside', () => { container.cursor = 'grab'; });
 
       this.nodeLayer.addChild(container);
-      this.nodeViews.set(component.id, { container, body, title, valueText, valueButton, joystickPad, analogJoystickPad, segmentDisplay, wordDisplay, decimalReadout, ports, width, height });
+      this.nodeViews.set(component.id, { container, body, title, valueText, valueButton, joystickPad, analogJoystickPad, segmentDisplay, wordDisplay, tritLed, wordProbe, pixelDisplay, rgbDisplay, decimalReadout, ports, width, height });
       this.drawNode(component.id);
       this.refreshComponentView(component.id);
     }
@@ -705,6 +769,48 @@
         if (bezel) bezel.clear().roundRect(0, 0, 120, 46, 8).fill(0x0a0d12).stroke({ color: 0x485568, width: 1 });
         values.forEach((value, index) => {
           const glyph = view.wordDisplay?.glyphs[index];
+          if (!glyph) return;
+          glyph.text = wordGlyph(value); glyph.style.fill = signalColor(value);
+        });
+      } else if (component.type === 'trit-led') {
+        const value = trit(component.state.value);
+        view.valueText.text = `indicator = ${signalText(value)}`;
+        view.valueText.style.fill = signalColor(value);
+        const bezel = view.tritLed?._bezel, lamp = view.tritLed?._lamp, label = view.tritLed?._text;
+        if (bezel) bezel.clear().roundRect(0, 0, 40, 42, 8).fill(0x0a0d12).stroke({ color: 0x485568, width: 1 });
+        if (lamp) lamp.clear().circle(20, 16, 10).fill(signalColor(value)).stroke({ color: 0xd9ecff, width: value === 1 ? 1.2 : .6 });
+        if (label) { label.text = wordGlyph(value); label.style.fill = COLORS.text; }
+      } else if (component.type === 'binary-led') {
+        const value = trit(component.state.value);
+        const invalid = value === null || value === 'Z';
+        const lit = Boolean(component.state.lit);
+        view.valueText.text = value === null ? 'invalid wiring: ?' : value === 'Z' ? 'invalid wiring: Z' : lit ? 'on · input ±1' : 'off · input 0';
+        view.valueText.style.fill = invalid ? signalColor(value) : lit ? COLORS.pos : COLORS.muted;
+        const bezel = view.tritLed?._bezel, lamp = view.tritLed?._lamp, label = view.tritLed?._text;
+        if (bezel) bezel.clear().roundRect(0, 0, 40, 42, 8).fill(0x0a0d12).stroke({ color: invalid ? signalColor(value) : 0x485568, width: invalid ? 1.5 : 1 });
+        if (lamp) lamp.clear().circle(20, 16, 10).fill(invalid ? signalColor(value) : lit ? COLORS.pos : 0x293449).stroke({ color: lit ? 0xc8ffed : 0x536678, width: lit ? 1.2 : .6 });
+        if (label) { label.text = invalid ? wordGlyph(value) : lit ? 'ON' : 'OFF'; label.style.fill = COLORS.text; label.style.fontSize = invalid ? 12 : 8; }
+      } else if (component.type === 'pixel-display3') {
+        const invalid = component.state.invalidIo;
+        const pixels = Array.isArray(component.state.pixels) ? component.state.pixels : Array(9).fill(0);
+        view.valueText.text = invalid ? `invalid I/O · ${invalid}` : '3×3 frame · writes on 0 → +1';
+        view.valueText.style.fill = invalid ? COLORS.unknown : COLORS.muted;
+        drawPixelDisplay(view.pixelDisplay?._frame, pixels, Boolean(invalid));
+      } else if (component.type === 'rgb-display24-addressed' || component.type === 'rgb-display24-stream') {
+        const invalid = component.state.invalidIo;
+        const cursor = Math.max(0, Math.min(575, Number(component.state.cursor) || 0));
+        const packetLength = Math.max(0, Math.min(17, Array.isArray(component.state.packet) ? component.state.packet.length : 0));
+        view.valueText.text = invalid ? `invalid I/O · ${invalid}` : component.type === 'rgb-display24-stream' ? `raster cursor ${cursor} · RGB packet ${packetLength}/18` : 'addressed x/y · writes on 0 → +1';
+        view.valueText.style.fill = invalid ? COLORS.unknown : COLORS.muted;
+        drawRgbDisplay24(view.rgbDisplay?._frame, Array.isArray(component.state.pixels) ? component.state.pixels : [], Boolean(invalid));
+      } else if (component.type === 'word-probe6') {
+        const values = ['t5', 't4', 't3', 't2', 't1', 't0'].map((name) => trit(component.inputs[name]));
+        view.valueText.text = 'debug word observer · no circuit output';
+        view.valueText.style.fill = COLORS.muted;
+        const bezel = view.wordProbe?._bezel;
+        if (bezel) bezel.clear().roundRect(0, 0, 120, 46, 8).fill(0x0a0d12).stroke({ color: 0x485568, width: 1 });
+        values.forEach((value, index) => {
+          const glyph = view.wordProbe?.glyphs[index];
           if (!glyph) return;
           glyph.text = wordGlyph(value); glyph.style.fill = signalColor(value);
         });
