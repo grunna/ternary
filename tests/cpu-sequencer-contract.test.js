@@ -1,0 +1,16 @@
+'use strict';
+const assert = require('assert'); global.window = global; require('../js/core.js');
+const { CPU_PHASES, CPU_OPCODES, decodeInstruction6, cpuSequencerControls, nextCpuPhase } = global.TernaryCore;
+const add = decodeInstruction6([...CPU_OPCODES.ADD, 1, -1, 0]);
+assert.deepStrictEqual(cpuSequencerControls(CPU_PHASES.FETCH), { instructionLoad: 1, memoryAction: -1, registerWrite: 0, pcControl: 0, pcLoad: 0, halted: 0 });
+assert.strictEqual(nextCpuPhase(CPU_PHASES.FETCH, add), CPU_PHASES.EXECUTE);
+assert.deepStrictEqual(cpuSequencerControls(CPU_PHASES.EXECUTE, add), { instructionLoad: 0, memoryAction: 0, registerWrite: 1, writeBackSelect: 1, immediate: 0, aluOperation: 1, pcControl: 1, pcLoad: 0, halted: 0 });
+assert.strictEqual(nextCpuPhase(CPU_PHASES.EXECUTE, add), CPU_PHASES.FETCH);
+const brz = decodeInstruction6([...CPU_OPCODES.BRZ, 0, -1, 1]);
+assert.strictEqual(cpuSequencerControls(CPU_PHASES.EXECUTE, brz, true).pcLoad, 1, 'taken BRZ loads PC');
+assert.strictEqual(cpuSequencerControls(CPU_PHASES.EXECUTE, brz, false).pcLoad, 0, 'untaken BRZ advances PC');
+const halt = decodeInstruction6([...CPU_OPCODES.HALT, 0, 0, 0]);
+assert.strictEqual(nextCpuPhase(CPU_PHASES.EXECUTE, halt), CPU_PHASES.HALTED);
+assert.strictEqual(nextCpuPhase(CPU_PHASES.HALTED, add), CPU_PHASES.HALTED);
+assert.strictEqual(nextCpuPhase(CPU_PHASES.HALTED, add, { reset: true }), CPU_PHASES.FETCH);
+console.log('CPU sequencer contract passed: fetch, execute, halt, branch and reset transitions are deterministic.');

@@ -21,6 +21,72 @@
     return remaining === 0 ? digits : null;
   };
   const balancedWordValue = (values) => values.every(isKnownTrit) ? values.reduce((total, value) => total * 3 + trit(value), 0) : null;
+  const CPU_OPCODES = Object.freeze({ HALT: [-1, -1, -1], MOV: [-1, -1, 0], ADD: [-1, -1, 1], SUB: [-1, 0, -1], LOAD: [-1, 0, 0], STORE: [-1, 0, 1], JUMP: [-1, 1, -1], BRZ: [-1, 1, 0], NOP: [-1, 1, 1], LIT: [1, -1, -1] });
+  const opcodeKey = (values) => values.map(trit).join(',');
+  const decodeInstruction6 = (values) => {
+    const word = Array.isArray(values) ? values.map(trit) : [];
+    if (word.length !== 6 || !word.every(isKnownTrit)) return { valid: false, mnemonic: 'INVALID', registerWrite: 0, memoryAction: 0, pcLoad: 0, pcControl: 0 };
+    const [op2, op1, op0, rd, ra, rb] = word;
+    const base = { valid: true, rd, ra, rb, registerWrite: 0, writeBackSelect: 0, aluOperation: 0, memoryAction: 0, pcLoad: 0, pcControl: 1, halt: 0, branchIfZero: 0 };
+    const mnemonic = Object.entries(CPU_OPCODES).find(([, opcode]) => opcodeKey(opcode) === opcodeKey([op2, op1, op0]))?.[0];
+    if (!mnemonic) return { ...base, valid: false, mnemonic: 'RESERVED', pcControl: 0 };
+    if (mnemonic === 'HALT') return { ...base, mnemonic, halt: 1, pcControl: 0 };
+    if (mnemonic === 'MOV') return { ...base, mnemonic, registerWrite: 1, writeBackSelect: 0 };
+    if (mnemonic === 'ADD') return { ...base, mnemonic, registerWrite: 1, writeBackSelect: 1, aluOperation: 1 };
+    if (mnemonic === 'SUB') return { ...base, mnemonic, registerWrite: 1, writeBackSelect: 1, aluOperation: -1 };
+    if (mnemonic === 'LOAD') return { ...base, mnemonic, registerWrite: 1, writeBackSelect: -1, memoryAction: -1 };
+    if (mnemonic === 'STORE') return { ...base, mnemonic, memoryAction: 1 };
+    if (mnemonic === 'JUMP') return { ...base, mnemonic, pcLoad: 1 };
+    if (mnemonic === 'BRZ') return { ...base, mnemonic, branchIfZero: 1 };
+    if (mnemonic === 'LIT') return { ...base, mnemonic, registerWrite: 1, writeBackSelect: -1, immediate: 1 };
+    return { ...base, mnemonic };
+  };
+  const CPU_PHASES = Object.freeze({ FETCH: 'fetch', EXECUTE: 'execute', HALTED: 'halted' });
+  const cpuSequencerControls = (phase, decoded = {}, branchZero = false) => {
+    if (phase === CPU_PHASES.FETCH) return { instructionLoad: 1, memoryAction: -1, registerWrite: 0, pcControl: 0, pcLoad: 0, halted: 0 };
+    if (phase === CPU_PHASES.HALTED) return { instructionLoad: 0, memoryAction: 0, registerWrite: 0, pcControl: 0, pcLoad: 0, halted: 1 };
+    const branchTaken = decoded.branchIfZero === 1 && branchZero === true;
+    return { instructionLoad: 0, memoryAction: decoded.memoryAction || 0, registerWrite: decoded.registerWrite || 0, writeBackSelect: decoded.writeBackSelect || 0, immediate: decoded.immediate || 0, aluOperation: decoded.aluOperation || 0, pcControl: decoded.halt === 1 || decoded.valid === false ? 0 : 1, pcLoad: decoded.pcLoad === 1 || branchTaken ? 1 : 0, halted: 0 };
+  };
+  const nextCpuPhase = (phase, decoded = {}, { reset = false } = {}) => {
+    if (reset) return CPU_PHASES.FETCH;
+    if (phase === CPU_PHASES.HALTED) return CPU_PHASES.HALTED;
+    if (phase === CPU_PHASES.FETCH) return CPU_PHASES.EXECUTE;
+    return decoded.halt === 1 ? CPU_PHASES.HALTED : CPU_PHASES.FETCH;
+  };
+  const signExtendAddress3 = (values) => {
+    const address = Array.isArray(values) ? values.map(trit) : [];
+    if (address.length !== 3 || !address.every(isKnownTrit)) return Array(6).fill(UNKNOWN);
+    // Balanced ternary is positional, not two's complement: leading copies of
+    // a negative trit change the number. Zero-prefixing preserves −13…+13.
+    return [0, 0, 0, ...address];
+  };
+  // Memory reads are zero-cycle: the selected word settles before this phase's
+  // closing edge. LOAD therefore writes that settled word at its execute edge;
+  // STORE instead commits its input word on that same edge.
+  const cpuMemoryCycle = (phase, executeAction = 0, executeRegisterWrite = 0) => {
+    if (phase === CPU_PHASES.FETCH) return { action: -1, instructionLoad: 1, readSample: 1, loadWrite: 0, storeWrite: 0, readLatency: 0 };
+    if (phase !== CPU_PHASES.EXECUTE) return { action: 0, instructionLoad: 0, readSample: 0, loadWrite: 0, storeWrite: 0, readLatency: 0 };
+    const action = trit(executeAction), registerWrite = trit(executeRegisterWrite);
+    if (!isKnownTrit(action) || !isKnownTrit(registerWrite)) return { action: UNKNOWN, instructionLoad: 0, readSample: UNKNOWN, loadWrite: UNKNOWN, storeWrite: UNKNOWN, readLatency: 0 };
+    return { action, instructionLoad: 0, readSample: action === -1 ? 1 : 0, loadWrite: action === -1 && registerWrite === 1 ? 1 : 0, storeWrite: action === 1 ? 1 : 0, readLatency: 0 };
+  };
+  const cpuControlFlow6 = (phase, controls = {}, compareEqual = UNKNOWN, ra = [], rb = []) => {
+    const idle = { pcControl: 0, pcLoad: 0, branchTaken: 0, target: Array(6).fill(UNKNOWN) };
+    if (phase !== CPU_PHASES.EXECUTE || trit(controls.pcControl) !== 1) return idle;
+    const branchIfZero = trit(controls.branchIfZero), pcLoadRequest = trit(controls.pcLoad);
+    if (branchIfZero === 1) {
+      const target = signExtendAddress3(rb.slice(-3));
+      if (compareEqual === 1 && target.every(isKnownTrit)) return { pcControl: 0, pcLoad: 1, branchTaken: 1, target };
+      if (compareEqual === 0) return { pcControl: 1, pcLoad: 0, branchTaken: 0, target };
+      return { pcControl: UNKNOWN, pcLoad: UNKNOWN, branchTaken: UNKNOWN, target };
+    }
+    if (pcLoadRequest === 1) {
+      const target = signExtendAddress3(ra.slice(-3));
+      return target.every(isKnownTrit) ? { pcControl: 0, pcLoad: 1, branchTaken: 0, target } : { pcControl: UNKNOWN, pcLoad: UNKNOWN, branchTaken: 0, target };
+    }
+    return { ...idle, pcControl: 1, target: signExtendAddress3(ra.slice(-3)) };
+  };
   const RGB_WORD_PORTS = ['r5', 'r4', 'r3', 'r2', 'r1', 'r0', 'g5', 'g4', 'g3', 'g2', 'g1', 'g0', 'b5', 'b4', 'b3', 'b2', 'b1', 'b0'];
   const RGB_DISPLAY_SIZE = 24;
   const emptyRgbFrame = () => Array.from({ length: RGB_DISPLAY_SIZE * RGB_DISPLAY_SIZE }, () => [0, 0, 0]);
@@ -267,7 +333,10 @@
     }
 
     wouldCreateCombinationalLoop(fromComponentId, toComponentId, ignoredWireId = null) {
-      if (fromComponentId === toComponentId && breaksCombinationalPath(this.components.get(fromComponentId), this.registry)) return false;
+      // A storage output is a temporal boundary. Even if its value is later
+      // routed back to that storage cell's input, the new outgoing edge cannot
+      // close a *combinational* path.
+      if (breaksCombinationalPath(this.components.get(fromComponentId), this.registry)) return false;
       const outgoing = new Map();
       for (const wire of this.wires.values()) {
         if (wire.id === ignoredWireId) continue;
@@ -713,6 +782,221 @@
       return { out: trit(values[address < 0 ? 0 : address > 0 ? 2 : 1]) };
     },
   });
+  const wordLanes = ['5', '4', '3', '2', '1', '0'];
+  registry.register({
+    type: 'register-bank3x6', label: '6-trit ternary register bank', category: 'storage', breaksCombinationalPath: true,
+    inputs: [...wordLanes.map((lane) => `dataIn${lane}`), 'address', 'action', 'clock', 'reset'], outputs: wordLanes.map((lane) => `dataOut${lane}`),
+    defaultState: { values: Array.from({ length: 3 }, () => Array(6).fill(UNKNOWN)), initialValue: 0, previousClock: 0 },
+    evaluate(c, { circuit }) {
+      const address = trit(c.inputs.address), action = trit(c.inputs.action), clock = trit(c.inputs.clock), reset = trit(c.inputs.reset), staged = circuit.getStagedState(c.id);
+      if (isKnownTrit(clock)) {
+        const risingEdge = trit(staged.previousClock) === 0 && clock === 1;
+        const patch = { previousClock: clock };
+        if (risingEdge && reset === 1) patch.values = Array.from({ length: 3 }, () => Array(6).fill(trit(c.state.initialValue)));
+        else if (risingEdge && reset === 0 && action === 1 && isKnownTrit(address) && wordLanes.every((lane) => isKnownTrit(c.inputs[`dataIn${lane}`]))) {
+          const values = (Array.isArray(staged.values) ? staged.values : []).map((word) => Array.isArray(word) ? word.map(trit) : Array(6).fill(UNKNOWN));
+          while (values.length < 3) values.push(Array(6).fill(UNKNOWN));
+          values[address < 0 ? 0 : address > 0 ? 2 : 1] = wordLanes.map((lane) => trit(c.inputs[`dataIn${lane}`]));
+          patch.values = values;
+        }
+        circuit.stageStateCommit(c.id, patch);
+      }
+      if (action !== -1 || !isKnownTrit(address)) return Object.fromEntries(wordLanes.map((lane) => [`dataOut${lane}`, UNKNOWN]));
+      const word = (c.state.values || [])[address < 0 ? 0 : address > 0 ? 2 : 1] || Array(6).fill(UNKNOWN);
+      return Object.fromEntries(wordLanes.map((lane, index) => [`dataOut${lane}`, trit(word[index])]));
+    },
+  });
+  registry.register({
+    type: 'program-counter6', label: '6-trit program counter', category: 'storage', breaksCombinationalPath: true,
+    inputs: ['control', ...wordLanes.map((lane) => `loadData${lane}`), 'load', 'clock', 'reset'], outputs: [...wordLanes.map((lane) => `pc${lane}`), 'extension'],
+    defaultState: { values: Array(6).fill(UNKNOWN), initialValue: 0, previousClock: 0 },
+    evaluate(c, { circuit }) {
+      const control = trit(c.inputs.control), load = trit(c.inputs.load), clock = trit(c.inputs.clock), reset = trit(c.inputs.reset), staged = circuit.getStagedState(c.id);
+      const current = Array.isArray(c.state.values) ? c.state.values.map(trit) : Array(6).fill(UNKNOWN);
+      const currentValue = balancedWordValue(current);
+      let extension = UNKNOWN, next = null;
+      if (currentValue !== null && isKnownTrit(control)) {
+        const raw = currentValue + control;
+        extension = raw < -364 ? -1 : raw > 364 ? 1 : 0;
+        next = balancedWordDigits(raw - 729 * extension, 6);
+      }
+      const loadData = wordLanes.map((lane) => trit(c.inputs[`loadData${lane}`]));
+      const validLoad = load === 1 && loadData.every(isKnownTrit);
+      if (validLoad) extension = 0;
+      if (isKnownTrit(clock)) {
+        const risingEdge = trit(staged.previousClock) === 0 && clock === 1;
+        const patch = { previousClock: clock };
+        if (risingEdge && reset === 1) patch.values = Array(6).fill(trit(c.state.initialValue));
+        else if (risingEdge && reset === 0 && validLoad) patch.values = loadData;
+        else if (risingEdge && reset === 0 && load !== null && load !== 'Z' && next) patch.values = next;
+        circuit.stageStateCommit(c.id, patch);
+      }
+      return { ...Object.fromEntries(wordLanes.map((lane, index) => [`pc${lane}`, current[index]])), extension };
+    },
+  });
+  registry.register({
+    type: 'instruction-register6', label: '6-trit instruction register', category: 'storage', breaksCombinationalPath: true,
+    inputs: [...wordLanes.map((lane) => `instruction${lane}`), 'load', 'clock', 'reset'], outputs: wordLanes.map((lane) => `instruction${lane}`),
+    defaultState: { values: Array(6).fill(UNKNOWN), initialValue: 0, previousClock: 0 },
+    evaluate(c, { circuit }) {
+      const load = trit(c.inputs.load), clock = trit(c.inputs.clock), reset = trit(c.inputs.reset), staged = circuit.getStagedState(c.id);
+      const incoming = wordLanes.map((lane) => trit(c.inputs[`instruction${lane}`]));
+      if (isKnownTrit(clock)) {
+        const risingEdge = trit(staged.previousClock) === 0 && clock === 1;
+        const patch = { previousClock: clock };
+        if (risingEdge && reset === 1) patch.values = Array(6).fill(trit(c.state.initialValue));
+        else if (risingEdge && load === 1 && incoming.every(isKnownTrit)) patch.values = incoming;
+        circuit.stageStateCommit(c.id, patch);
+      }
+      const values = Array.isArray(c.state.values) ? c.state.values.map(trit) : Array(6).fill(UNKNOWN);
+      return Object.fromEntries(wordLanes.map((lane, index) => [`instruction${lane}`, values[index]]));
+    },
+  });
+  registry.register({
+    type: 'instruction-control6', label: 'Instruction control — 6-trit', category: 'control',
+    inputs: [...wordLanes.map((lane) => `instruction${lane}`), 'phase', 'branchZero'], outputs: ['rd', 'ra', 'rb', 'instructionLoad', 'registerWrite', 'writeBackSelect', 'immediate', 'aluOperation', 'memoryAction', 'pcLoad', 'pcControl', 'halt', 'branchIfZero'],
+    evaluate(c) {
+      const instruction = wordLanes.map((lane) => trit(c.inputs[`instruction${lane}`]));
+      const decoded = decodeInstruction6(instruction);
+      const phase = trit(c.inputs.phase);
+      const controls = cpuSequencerControls(phase === 0 ? CPU_PHASES.FETCH : phase === 1 ? CPU_PHASES.EXECUTE : CPU_PHASES.HALTED, decoded, trit(c.inputs.branchZero) === 1);
+      return { rd: decoded.rd ?? UNKNOWN, ra: decoded.ra ?? UNKNOWN, rb: decoded.rb ?? UNKNOWN, instructionLoad: controls.instructionLoad, registerWrite: controls.registerWrite, writeBackSelect: controls.writeBackSelect ?? 0, immediate: controls.immediate ?? 0, aluOperation: controls.aluOperation ?? 0, memoryAction: controls.memoryAction, pcLoad: controls.pcLoad, pcControl: controls.pcControl, halt: controls.halted || decoded.halt || 0, branchIfZero: decoded.branchIfZero || 0 };
+    },
+  });
+  registry.register({
+    type: 'cpu-sequencer3', label: 'CPU fetch / execute sequencer', category: 'control', breaksCombinationalPath: true,
+    inputs: ['halt', 'clock', 'reset'], outputs: ['phase'], defaultState: { phase: 0, previousClock: 0 },
+    evaluate(c, { circuit }) {
+      const halt = trit(c.inputs.halt), clock = trit(c.inputs.clock), reset = trit(c.inputs.reset), staged = circuit.getStagedState(c.id);
+      if (isKnownTrit(clock)) {
+        const risingEdge = trit(staged.previousClock) === 0 && clock === 1, patch = { previousClock: clock };
+        if (risingEdge && reset === 1) patch.phase = 0;
+        else if (risingEdge && trit(staged.phase) === 0) patch.phase = 1;
+        else if (risingEdge && trit(staged.phase) === 1) patch.phase = halt === 1 ? -1 : 0;
+        circuit.stageStateCommit(c.id, patch);
+      }
+      return { phase: trit(c.state.phase) };
+    },
+  });
+  registry.register({ type: 'word-zero6', label: '6-trit zero test', category: 'control', inputs: wordLanes.map((lane) => `t${lane}`), outputs: ['zero'], evaluate(c) { const values = wordLanes.map((lane) => trit(c.inputs[`t${lane}`])); return { zero: values.every(isKnownTrit) ? (values.every((value) => value === 0) ? 1 : 0) : UNKNOWN }; } });
+  registry.register({ type: 'cpu-address27', label: 'CPU fetch / data address select', category: 'control', inputs: ['pc2', 'pc1', 'pc0', 'ra2', 'ra1', 'ra0', 'phase'], outputs: ['address2', 'address1', 'address0'], evaluate(c) { const phase = trit(c.inputs.phase); const prefix = phase === 1 ? 'ra' : phase === 0 || phase === -1 ? 'pc' : null; return Object.fromEntries(['2', '1', '0'].map((lane) => [`address${lane}`, prefix ? trit(c.inputs[`${prefix}${lane}`]) : UNKNOWN])); } });
+  registry.register({ type: 'cpu-memory-port27', label: 'CPU / Memory 27×6 port', category: 'control', inputs: ['pc2', 'pc1', 'pc0', 'ra2', 'ra1', 'ra0', 'phase', 'executeAction', ...wordLanes.map((lane) => `dataIn${lane}`)], outputs: ['address2', 'address1', 'address0', 'action', ...wordLanes.map((lane) => `dataOut${lane}`)], evaluate(c) { const phase = trit(c.inputs.phase), prefix = phase === 1 ? 'ra' : phase === 0 || phase === -1 ? 'pc' : null; const action = phase === 0 ? -1 : phase === 1 ? trit(c.inputs.executeAction) : 0; const data = Object.fromEntries(wordLanes.map((lane) => [`dataOut${lane}`, trit(c.inputs[`dataIn${lane}`])])); return { ...Object.fromEntries(['2', '1', '0'].map((lane) => [`address${lane}`, prefix ? trit(c.inputs[`${prefix}${lane}`]) : UNKNOWN])), action, ...data }; } });
+  registry.register({
+    type: 'cpu-memory-cycle6', label: 'CPU memory-cycle timing', category: 'control',
+    inputs: ['phase', 'executeAction', 'executeRegisterWrite'], outputs: ['action', 'instructionLoad', 'readSample', 'loadWrite', 'storeWrite'],
+    evaluate(c) {
+      const phase = trit(c.inputs.phase) === 0 ? CPU_PHASES.FETCH : trit(c.inputs.phase) === 1 ? CPU_PHASES.EXECUTE : CPU_PHASES.HALTED;
+      const cycle = cpuMemoryCycle(phase, c.inputs.executeAction, c.inputs.executeRegisterWrite);
+      return Object.fromEntries(['action', 'instructionLoad', 'readSample', 'loadWrite', 'storeWrite'].map((name) => [name, cycle[name]]));
+    },
+  });
+  registry.register({
+    type: 'cpu-control-flow6', label: 'CPU branch / PC control', category: 'control',
+    inputs: ['phase', 'pcControlRequest', 'pcLoadRequest', 'branchIfZero', 'compareEqual', ...wordLanes.map((lane) => `ra${lane}`), ...wordLanes.map((lane) => `rb${lane}`)], outputs: ['pcControl', 'pcLoad', 'branchTaken', ...wordLanes.map((lane) => `target${lane}`)],
+    evaluate(c) {
+      const phase = trit(c.inputs.phase) === 0 ? CPU_PHASES.FETCH : trit(c.inputs.phase) === 1 ? CPU_PHASES.EXECUTE : CPU_PHASES.HALTED;
+      const flow = cpuControlFlow6(phase, { pcControl: c.inputs.pcControlRequest, pcLoad: c.inputs.pcLoadRequest, branchIfZero: c.inputs.branchIfZero }, trit(c.inputs.compareEqual), wordLanes.map((lane) => trit(c.inputs[`ra${lane}`])), wordLanes.map((lane) => trit(c.inputs[`rb${lane}`])));
+      return { pcControl: flow.pcControl, pcLoad: flow.pcLoad, branchTaken: flow.branchTaken, ...Object.fromEntries(wordLanes.map((lane, index) => [`target${lane}`, flow.target[index]])) };
+    },
+  });
+  registry.register({
+    type: 'register-file3x6', label: '6-trit dual-read register file', category: 'storage', breaksCombinationalPath: true,
+    inputs: [...wordLanes.map((lane) => `dataIn${lane}`), 'readAAddress', 'readBAddress', 'writeAddress', 'writeAction', 'clock', 'reset'], outputs: [...wordLanes.map((lane) => `readA${lane}`), ...wordLanes.map((lane) => `readB${lane}`)],
+    defaultState: { values: Array.from({ length: 3 }, () => Array(6).fill(UNKNOWN)), initialValue: 0, previousClock: 0 },
+    evaluate(c, { circuit }) {
+      const readAAddress = trit(c.inputs.readAAddress), readBAddress = trit(c.inputs.readBAddress), writeAddress = trit(c.inputs.writeAddress), writeAction = trit(c.inputs.writeAction), clock = trit(c.inputs.clock), reset = trit(c.inputs.reset), staged = circuit.getStagedState(c.id);
+      if (isKnownTrit(clock)) {
+        const risingEdge = trit(staged.previousClock) === 0 && clock === 1;
+        const patch = { previousClock: clock };
+        if (risingEdge && reset === 1) patch.values = Array.from({ length: 3 }, () => Array(6).fill(trit(c.state.initialValue)));
+        else if (risingEdge && reset === 0 && writeAction === 1 && isKnownTrit(writeAddress) && wordLanes.every((lane) => isKnownTrit(c.inputs[`dataIn${lane}`]))) {
+          const values = (Array.isArray(staged.values) ? staged.values : []).map((word) => Array.isArray(word) ? word.map(trit) : Array(6).fill(UNKNOWN));
+          while (values.length < 3) values.push(Array(6).fill(UNKNOWN));
+          values[writeAddress < 0 ? 0 : writeAddress > 0 ? 2 : 1] = wordLanes.map((lane) => trit(c.inputs[`dataIn${lane}`]));
+          patch.values = values;
+        }
+        circuit.stageStateCommit(c.id, patch);
+      }
+      const values = Array.isArray(c.state.values) ? c.state.values : [];
+      const read = (address) => isKnownTrit(address) ? (values[address < 0 ? 0 : address > 0 ? 2 : 1] || Array(6).fill(UNKNOWN)) : Array(6).fill(UNKNOWN);
+      const a = read(readAAddress), b = read(readBAddress);
+      return { ...Object.fromEntries(wordLanes.map((lane, index) => [`readA${lane}`, trit(a[index])])), ...Object.fromEntries(wordLanes.map((lane, index) => [`readB${lane}`, trit(b[index])])) };
+    },
+  });
+  registry.register({
+    type: 'cpu6', label: 'Opening ternary CPU — 6-trit', category: 'computer', breaksCombinationalPath: true,
+    inputs: [...wordLanes.map((lane) => `memoryData${lane}`), 'clock', 'reset'],
+    outputs: ['address2', 'address1', 'address0', 'memoryAction', ...wordLanes.map((lane) => `memoryWrite${lane}`), ...wordLanes.map((lane) => `pc${lane}`), ...wordLanes.flatMap((lane) => [`rNeg${lane}`, `rZero${lane}`, `rPos${lane}`]), ...wordLanes.map((lane) => `instruction${lane}`), 'phase', 'halted'],
+    defaultState: { pc: Array(6).fill(UNKNOWN), registers: Array.from({ length: 3 }, () => Array(6).fill(UNKNOWN)), instruction: Array(6).fill(UNKNOWN), phase: 0, previousClock: 0 },
+    evaluate(c, { circuit }) {
+      const state = circuit.getStagedState(c.id);
+      const pc = Array.isArray(c.state.pc) ? c.state.pc.map(trit) : Array(6).fill(UNKNOWN);
+      const registers = Array.isArray(c.state.registers) ? c.state.registers.map((word) => Array.isArray(word) ? word.map(trit) : Array(6).fill(UNKNOWN)) : Array.from({ length: 3 }, () => Array(6).fill(UNKNOWN));
+      const instruction = Array.isArray(c.state.instruction) ? c.state.instruction.map(trit) : Array(6).fill(UNKNOWN);
+      const phase = trit(c.state.phase);
+      const decoded = decodeInstruction6(instruction);
+      const index = (address) => address < 0 ? 0 : address > 0 ? 2 : 1;
+      const read = (address) => isKnownTrit(address) ? (registers[index(address)] || Array(6).fill(UNKNOWN)) : Array(6).fill(UNKNOWN);
+      const ra = read(decoded.ra), rb = read(decoded.rb);
+      const memoryAction = phase === 0 ? -1 : phase === 1 ? trit(decoded.memoryAction) : 0;
+      const addressWord = phase === 0 ? pc.slice(-3) : phase === 1 ? ra.slice(-3) : Array(3).fill(UNKNOWN);
+      const memoryData = wordLanes.map((lane) => trit(c.inputs[`memoryData${lane}`]));
+      const clock = trit(c.inputs.clock), reset = trit(c.inputs.reset);
+      const increment = (word) => {
+        const value = balancedWordValue(word);
+        if (value === null) return null;
+        return balancedWordDigits(((value + 1 + 364) % 729 + 729) % 729 - 364, 6);
+      };
+      const arithmetic = (left, right, operation) => {
+        const a = balancedWordValue(left), b = balancedWordValue(right);
+        if (a === null || b === null) return null;
+        const raw = operation === -1 ? a - b : operation === 1 ? a + b : a;
+        return balancedWordDigits(((raw + 364) % 729 + 729) % 729 - 364, 6);
+      };
+      if (isKnownTrit(clock)) {
+        const rising = trit(state.previousClock) === 0 && clock === 1;
+        const patch = { previousClock: clock };
+        if (rising && reset === 1) {
+          patch.pc = Array(6).fill(0); patch.registers = Array.from({ length: 3 }, () => Array(6).fill(0)); patch.instruction = Array(6).fill(0); patch.phase = 0;
+        } else if (rising && reset === 0 && phase === 0) {
+          if (memoryData.every(isKnownTrit)) patch.instruction = memoryData;
+          patch.phase = 1;
+        } else if (rising && reset === 0 && phase === 1) {
+          const nextRegisters = registers.map((word) => [...word]);
+          let write = null;
+          if (decoded.mnemonic === 'MOV') write = ra;
+          else if (decoded.mnemonic === 'ADD' || decoded.mnemonic === 'SUB') write = arithmetic(ra, rb, decoded.aluOperation);
+          else if (decoded.mnemonic === 'LOAD' && memoryData.every(isKnownTrit)) write = memoryData;
+          else if (decoded.mnemonic === 'LIT') write = [0, 0, 0, 0, trit(decoded.ra), trit(decoded.rb)];
+          if (decoded.registerWrite === 1 && write?.every(isKnownTrit) && isKnownTrit(decoded.rd)) { nextRegisters[index(decoded.rd)] = write; patch.registers = nextRegisters; }
+          if (decoded.halt === 1) patch.phase = -1;
+          else {
+            const zero = ra.every((value) => value === 0);
+            const target = decoded.mnemonic === 'JUMP' ? signExtendAddress3(ra.slice(-3)) : decoded.mnemonic === 'BRZ' && zero ? signExtendAddress3(rb.slice(-3)) : null;
+            const nextPc = target || increment(pc);
+            if (nextPc?.every(isKnownTrit)) patch.pc = nextPc;
+            patch.phase = 0;
+          }
+        }
+        circuit.stageStateCommit(c.id, patch);
+      }
+      const registerOutputs = { ...Object.fromEntries(wordLanes.map((lane, laneIndex) => [`rNeg${lane}`, trit(registers[0][laneIndex])])), ...Object.fromEntries(wordLanes.map((lane, laneIndex) => [`rZero${lane}`, trit(registers[1][laneIndex])])), ...Object.fromEntries(wordLanes.map((lane, laneIndex) => [`rPos${lane}`, trit(registers[2][laneIndex])])) };
+      return { address2: addressWord[0], address1: addressWord[1], address0: addressWord[2], memoryAction, ...Object.fromEntries(wordLanes.map((lane, laneIndex) => [`memoryWrite${lane}`, trit(rb[laneIndex])])), ...Object.fromEntries(wordLanes.map((lane, laneIndex) => [`pc${lane}`, pc[laneIndex]])), ...registerOutputs, ...Object.fromEntries(wordLanes.map((lane, laneIndex) => [`instruction${lane}`, instruction[laneIndex]])), phase, halted: phase === -1 ? 1 : 0 };
+    },
+  });
+  registry.register({
+    type: 'cpu-program-loader6', label: 'CPU example-program loader', category: 'computer', breaksCombinationalPath: true,
+    inputs: ['clock'], outputs: ['address2', 'address1', 'address0', 'action', ...wordLanes.map((lane) => `data${lane}`), 'done', 'cpuReset'],
+    defaultState: { index: 0, previousClock: 0, active: false, program: [{ address: 0, word: [...CPU_OPCODES.LIT, -1, -1, -1] }, { address: 1, word: [...CPU_OPCODES.LIT, 0, 0, 1] }, { address: 2, word: [...CPU_OPCODES.ADD, 1, 0, 0] }, { address: 3, word: [...CPU_OPCODES.STORE, 0, -1, 1] }, { address: 4, word: [...CPU_OPCODES.LOAD, 0, -1, 0] }, { address: 5, word: [...CPU_OPCODES.HALT, 0, 0, 0] }] },
+    evaluate(c, { circuit }) {
+      const program = (Array.isArray(c.state.program) ? c.state.program : []).filter((entry) => Number.isInteger(Number(entry?.address)) && Number(entry.address) >= -13 && Number(entry.address) <= 13 && Array.isArray(entry.word) && entry.word.length === 6 && entry.word.every(isKnownTrit));
+      const index = Math.max(0, Number(c.state.index) || 0), active = c.state.active === true && index < program.length;
+      const clock = trit(c.inputs.clock), staged = circuit.getStagedState(c.id);
+      if (isKnownTrit(clock)) { const rising = trit(staged.previousClock) === 0 && clock === 1; const patch = { previousClock: clock }; if (rising && active) { patch.index = index + 1; if (index + 1 >= program.length) patch.active = false; } circuit.stageStateCommit(c.id, patch); }
+      const entry = active ? program[index] : null, address = entry ? balancedWordDigits(Number(entry.address), 3) : Array(3).fill(UNKNOWN), data = entry ? entry.word.map(trit) : Array(6).fill(UNKNOWN);
+      return { address2: address[0], address1: address[1], address0: address[2], action: active ? 1 : 0, ...Object.fromEntries(wordLanes.map((lane, laneIndex) => [`data${lane}`, data[laneIndex]])), done: active ? 0 : 1, cpuReset: active ? 1 : 0 };
+    },
+  });
   registry.register({
     type: 'memory3x1', label: 'Memory 3×1', category: 'storage', breaksCombinationalPath: true,
     inputs: ['dataIn', 'address', 'action', 'clock', 'reset'], outputs: ['dataOut'],
@@ -734,7 +1018,6 @@
       return { dataOut: trit(values[address < 0 ? 0 : address > 0 ? 2 : 1]) };
     },
   });
-  const wordLanes = ['5', '4', '3', '2', '1', '0'];
   registry.register({
     type: 'memory3x6', label: 'Memory 3×6', category: 'storage', breaksCombinationalPath: true,
     inputs: [...wordLanes.map((lane) => `dataIn${lane}`), 'address', 'action', 'clock', 'reset'], outputs: wordLanes.map((lane) => `dataOut${lane}`),
@@ -963,6 +1246,19 @@
     latch3: { mode: 'accelerated-equivalent', status: 'structural reference available', summary: 'Native execution accelerates the named structural latch.', layers: ['Ternary restorer', 'Ternary pass switch', 'Ternary storage node'], structuralImplementation: 'structural-latch-v1' },
     register3: { mode: 'accelerated-equivalent', status: 'structural reference available', summary: 'Native execution accelerates the named two-latch register.', layers: ['Clock phase inverter', 'load control', 'two structural latches'], structuralImplementation: 'structural-register-v1' },
     'register-bank3': { mode: 'accelerated-equivalent', status: 'structural reference available', summary: 'Native bank execution accelerates the named structural 3×1 bank.', layers: ['Ternary address decoder', 'three structural registers', 'write pass paths', 'Select3 read path'], structuralImplementation: 'structural-register-bank3-v1' },
+    'register-bank3x6': { mode: 'accelerated-equivalent', status: 'structural reference available', summary: 'Native word register-bank execution accelerates six aligned structural ternary register banks.', layers: ['Six structural three-register banks', 'Shared address/action/clock/reset', 'Atomic six-trit register boundary'], structuralImplementation: 'structural-register-bank3x6-v1' },
+    'program-counter6': { mode: 'accelerated-equivalent', status: 'structural reference available', summary: 'Native PC execution accelerates six structural registers and a chained Adjust3 increment/hold/decrement path.', layers: ['Six structural ternary registers', 'Six chained Adjust3 cells', 'Shared clock/reset and packed PC control'], structuralImplementation: 'structural-program-counter6-v1' },
+    'instruction-register6': { mode: 'accelerated-equivalent', status: 'structural reference available', summary: 'Native instruction-register execution represents six aligned edge-triggered registers at the fetch/decode boundary.', layers: ['Six structural ternary registers', 'Shared fetch-load/clock/reset'], structuralImplementation: 'structural-instruction-register6-v1' },
+    'instruction-control6': { mode: 'accelerated-equivalent', status: 'architectural control contract', summary: 'A declared instruction truth table translates the captured tryte and fetch/execute phase into named packed control trits. It is an inspectable control boundary, not an ISA primitive.', layers: ['Op2/Op1/Op0 decode', 'Rd/Ra/Rb field routing', 'Packed register/ALU/memory/PC controls'] },
+    'cpu-sequencer3': { mode: 'accelerated-equivalent', status: 'architectural control contract', summary: 'A declared state boundary alternates fetch and execute on shared clock edges, then retains halted state until reset.', layers: ['Fetch state', 'Execute state', 'Halted state'] },
+    'word-zero6': { mode: 'accelerated-equivalent', status: 'architectural control contract', summary: 'A declared word boundary reports +1 only for a fully known all-zero tryte.', layers: ['Six known ternary lanes', 'All-zero decision'] },
+    'cpu-address27': { mode: 'accelerated-equivalent', status: 'architectural control contract', summary: 'A declared address selector presents PC low trits during fetch and register-A low trits during execute.', layers: ['Fetch PC address', 'Execute register address', 'Three-trit Memory 27×6 address'] },
+    'cpu-memory-port27': { mode: 'accelerated-equivalent', status: 'architectural control contract', summary: 'A declared CPU-facing port multiplexes fetch reads and execute data accesses onto the public Memory 27×6 address/action/data contract.', layers: ['Fetch action −1', 'Execute read/idle/write action', 'Unmodified six-trit write data'] },
+    'cpu-memory-cycle6': { mode: 'accelerated-equivalent', status: 'architectural timing contract', summary: 'Makes the zero-cycle memory-read and synchronous write schedule explicit for fetch, LOAD and STORE.', layers: ['Fetch read and instruction-register sample', 'Execute LOAD read and register-file sample', 'Execute STORE edge write'] },
+    'cpu-control-flow6': { mode: 'accelerated-equivalent', status: 'architectural control contract', summary: 'Uses the proven 0 / +1 equality result to select normal PC increment, a conditional BRZ target or an unconditional JUMP target.', layers: ['Equal comparison result', 'Three-trit address sign extension', 'PC increment/load controls'] },
+    cpu6: { mode: 'accelerated-equivalent', status: 'documented architectural machine reference', summary: 'A complete six-trit fetch/execute CPU state boundary. Its public Memory 27×6 port, PC, register and instruction outputs make every architectural transition inspectable.', layers: ['Program counter and fetch/execute phase', 'Instruction decode and six-trit register file', 'ALU/write-back, branch control and Memory 27×6 port'], structuralImplementation: 'structural-cpu6-v1' },
+    'cpu-program-loader6': { mode: 'external-adapter', status: 'example fixture boundary', summary: 'Writes the documented 18C example program through the ordinary Memory 27×6 port before releasing CPU reset; it is not a memory preload backdoor.', layers: ['One public write transaction per clock edge', 'Example-program completion signal', 'CPU reset release after loading'] },
+    'register-file3x6': { mode: 'accelerated-equivalent', status: 'structural reference available', summary: 'Native register-file execution accelerates eighteen structural registers, one ternary write decoder and two six-lane Select3 read paths.', layers: ['Three six-trit registers', 'Packed ternary write action', 'Two independent ternary read addresses'], structuralImplementation: 'structural-register-file3x6-v1' },
     'memory3x1': { mode: 'accelerated-equivalent', status: 'structural reference available', summary: 'Native memory execution accelerates the named structural three-location ternary memory.', layers: ['Ternary address decoder', 'three structural registers', 'action-gated write paths', 'Select3 read path'], structuralImplementation: 'structural-memory3x1-v1' },
     'memory3x6': { mode: 'accelerated-equivalent', status: 'structural reference available', summary: 'Native word memory execution accelerates six aligned structural Memory 3×1 lanes.', layers: ['Six structural Memory 3×1 lanes', 'Shared address/action/clock/reset', 'Atomic six-trit word boundary'], structuralImplementation: 'structural-memory3x6-v1' },
     'seven-segment-display': { mode: 'external-adapter', status: 'user I/O display boundary', summary: 'An end-user peripheral consumes eight two-state segment-control lines. It is outside the ternary logic hierarchy, not a ternary shortcut.', layers: ['Ternary decoder component', '0 / +1 segment-control boundary', 'Physical/display adapter'] },
@@ -981,5 +1277,5 @@
   };
   for (const [type, implementation] of Object.entries(implementationMetadata)) registry.get(type).implementation = implementation;
 
-  global.TernaryCore = { TRITS, UNKNOWN, FLOATING, isUnknown, isFloating, isKnownTrit, trit, clone, normalizeSequence, nextSequenceState, EventBus, ComponentRegistry, Circuit, registry, slug, boundaryPorts, makeCustomDefinition };
+  global.TernaryCore = { TRITS, UNKNOWN, FLOATING, isUnknown, isFloating, isKnownTrit, trit, balancedWordDigits, balancedWordValue, CPU_OPCODES, decodeInstruction6, CPU_PHASES, cpuSequencerControls, nextCpuPhase, signExtendAddress3, cpuMemoryCycle, cpuControlFlow6, clone, normalizeSequence, nextSequenceState, EventBus, ComponentRegistry, Circuit, registry, slug, boundaryPorts, makeCustomDefinition };
 })(window);

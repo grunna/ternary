@@ -445,8 +445,10 @@
         wordDisplay.addChild(bezel); wordDisplay._bezel = bezel; wordDisplay.glyphs = [];
         for (let index = 0; index < 6; index += 1) {
           const glyph = new PIXI.Text({ text: '0', style: { fill: COLORS.zero, fontSize: 18, fontWeight: '700', fontFamily: 'monospace' } });
-          glyph.anchor.set(0.5); glyph.position.set(12 + index * 19, 23); wordDisplay.glyphs.push(glyph); wordDisplay.addChild(glyph);
+          glyph.anchor.set(0.5); glyph.position.set(12 + index * 19, 18); wordDisplay.glyphs.push(glyph); wordDisplay.addChild(glyph);
         }
+        const decimal = new PIXI.Text({ text: '0', style: { fill: COLORS.muted, fontSize: 13, fontWeight: '600', fontFamily: 'monospace' } });
+        decimal.anchor.set(0.5); decimal.position.set(60, 43); wordDisplay.decimal = decimal; wordDisplay.addChild(decimal);
         container.addChild(wordDisplay);
       }
       let tritLed = null;
@@ -766,12 +768,18 @@
         view.valueText.text = invalid ? 'word input contains Z or ?' : 'balanced ternary word';
         view.valueText.style.fill = invalid ? COLORS.floating : COLORS.muted;
         const bezel = view.wordDisplay?._bezel;
-        if (bezel) bezel.clear().roundRect(0, 0, 120, 46, 8).fill(0x0a0d12).stroke({ color: 0x485568, width: 1 });
+        if (bezel) bezel.clear().roundRect(0, 0, 120, 62, 8).fill(0x0a0d12).stroke({ color: 0x485568, width: 1 });
         values.forEach((value, index) => {
           const glyph = view.wordDisplay?.glyphs[index];
           if (!glyph) return;
           glyph.text = wordGlyph(value); glyph.style.fill = signalColor(value);
         });
+        const decimal = view.wordDisplay?.decimal;
+        if (decimal) {
+          const value = invalid ? null : values.reduce((total, digit) => total * 3 + digit, 0);
+          decimal.text = value === null ? '?' : String(value);
+          decimal.style.fill = value === null ? COLORS.floating : COLORS.muted;
+        }
       } else if (component.type === 'trit-led') {
         const value = trit(component.state.value);
         view.valueText.text = `indicator = ${signalText(value)}`;

@@ -328,30 +328,34 @@ Memory is completed before CPU integration. It must be a reusable, inspectable s
 
 ### Phase 18A — Datapath and state
 
-- [ ] Build a 6-trit register bank from the proven register/memory conventions
-- [ ] Build program-counter storage and an `Adjust3` increment/hold/decrement path
-- [ ] Connect the selected 6-trit ALU, register read paths and write-back selector
-- [ ] Define CPU reset state and clocked state-transition order
+- [x] Build a 6-trit register bank from the proven register/memory conventions
+- [x] Build program-counter storage and an `Adjust3` increment/hold/decrement path
+- [x] Connect the selected 6-trit ALU, register read paths and write-back selector
+- [x] Define CPU reset state and clocked state-transition order
 
 ### Phase 18B — Instructions, control and memory integration
 
-- [ ] Fix a 6-trit instruction representation and field layout
-- [ ] Define the smallest instruction set that exercises arithmetic, register movement, memory and branching
-- [ ] Build an inspectable ternary control architecture from instruction decode to packed control trits
-- [ ] Connect the CPU to the Phase 17 memory-port contract for instruction fetch and data access
-- [ ] Define load/store sequencing and memory-read latency handling
-- [ ] Implement conditional and unconditional branching using proven comparator outputs and PC control
+- [x] Fix a 6-trit instruction representation and field layout
+- [x] Define the smallest instruction set that exercises arithmetic, register movement, memory and branching
+- [x] Build an inspectable ternary control architecture from instruction decode to packed control trits
+- [x] Connect the CPU to the Phase 17 memory-port contract for instruction fetch and data access
+- [x] Define load/store sequencing and memory-read latency handling
+- [x] Implement conditional and unconditional branching using proven comparator outputs and PC control
 
 ### Phase 18C — Minimal runnable machine
 
-- [ ] Load a small ternary program into the public memory interface
-- [ ] Run arithmetic, memory and branch programs end-to-end
-- [ ] Verify each instruction by its register, PC and memory state transitions
-- [ ] Keep every CPU subsystem drillable down to its structural reference or documented cell boundary
-- [ ] Build a top-level computer console: external input peripherals → drillable Computer component → external output peripherals
-- [ ] Give the console explicit `Run computer`, clock/instruction step and reset controls; keep these separate from the simulator propagation controls
+- [x] Load a small ternary program into the public memory interface
+- [x] Run arithmetic, memory and branch programs end-to-end
+- [x] Verify each instruction by its register, PC and memory state transitions
+- [x] Keep every CPU subsystem drillable down to its structural reference or documented cell boundary
+- [x] Build a top-level computer console: external input peripherals → drillable Computer component → external output peripherals
+- [x] Give the console explicit `Run computer`, clock/instruction step and reset controls; keep these separate from the simulator propagation controls
 
 ## Phase 19 — CPU debugging
+- [x] Define a versioned portable ternary-program format: instruction/data words, addresses, labels and description
+- [x] Load a selected program through the public memory interface while keeping CPU reset/stopped
+- [x] Inspect the loaded program as address, six-trit word, decoded instruction and data rows before execution
+- [x] Export and import standalone program files so programs can be shared without exporting an entire project
 - [ ] Load a small ternary program
 - [ ] Instruction step
 - [ ] Clock step
@@ -362,6 +366,43 @@ Memory is completed before CPU integration. It must be a reusable, inspectable s
 - [ ] Probes
 - [ ] Waveform/timeline
 - [ ] Drill from CPU to primitive implementation while debugging
+
+## Phase 20 — Example programs and computer demonstrations
+
+Each example is an executable acceptance test for the machine, not a separate shortcut. Programs are loaded through the public memory interface and must be inspectable with the Phase 19 tools.
+
+### Phase 20A — Register and ALU smoke program
+
+- [ ] Load a short `MOV` / `ADD` / `SUB` program and halt deterministically
+- [ ] Show expected register values, PC and ALU extension after every instruction
+
+### Phase 20B — Memory round-trip program
+
+- [ ] Load, store and reload complete six-trit words through `Memory 27×6`
+- [ ] Verify that the program's final register and memory words match its declared result
+
+### Phase 20C — Loop and branch program
+
+- [ ] Build a bounded counter loop with `BRZ` and `JUMP`
+- [ ] Verify both taken and non-taken branch paths and the final halt state
+
+### Phase 20D — Bouncing-ball display program
+
+- [ ] Add a documented memory-mapped adapter for the existing `Pixel Display 3×3`
+- [ ] Write a program that clears the old pixel, updates position and reverses direction at each edge
+- [ ] Demonstrate the ball moving and bouncing using only CPU instructions, memory and the public display port
+
+### Phase 20E — Larger visual program (optional)
+
+- [ ] Extend the display program to the 24×24 RGB adapter after the small demo is proven
+- [ ] Document any required ISA, memory-map or timing extension before using it
+
+### Phase 20F — Interactive display program
+
+- [ ] Add a documented memory-mapped adapter that exposes the existing six-trit joystick X/Y words through ordinary `LOAD` instructions
+- [ ] Write a program that moves a display ball from joystick input while respecting the display bounds
+- [ ] Keep display writes and input reads on the same public CPU memory-port contract
+- [ ] Optionally add a pointer/mouse-to-ternary-coordinate adapter after joystick control is proven
 
 ## v9 additions
 

@@ -4,6 +4,8 @@
 
 # Ternary Lab
 
+The current six-trit CPU instruction reference is in [ISA.md](ISA.md).
+
 A static balanced-ternary circuit simulator built with plain JavaScript and PixiJS. No TypeScript, npm, bundler or backend is required.
 
 ## Architecture promise

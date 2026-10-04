@@ -15,10 +15,11 @@
   let current = { kind: 'root', label: 'Project', circuit: rootCircuit, customId: null };
   let renderer;
   let clipboard = null;
+  let computerRunTimer = null;
 
   const simulation = { mode: 'run', previousMode: 'run', timer: null, generatorTimer: null, generatorLastTick: performance.now(), activeUnsubscribers: [] };
 
-  const UTILITY_PRIMITIVES = ['trit-input', 'word-input6', 'input-button3', 'input-joystick3', 'input-joystick6', 'ternary-reference', 'sequence-generator', 'latch3', 'register3', 'register-bank3', 'memory3x1', 'memory3x6', 'memory9x6', 'memory27x6', 'memory81x6', 'seven-segment-display', 'trit-led', 'binary-led', 'word-display6', 'pixel-display3', 'rgb-display24-addressed', 'rgb-display24-stream', 'word-probe6', 'decimal-debug6', 'probe'];
+  const UTILITY_PRIMITIVES = ['trit-input', 'word-input6', 'input-button3', 'input-joystick3', 'input-joystick6', 'ternary-reference', 'sequence-generator', 'latch3', 'register3', 'register-bank3', 'register-bank3x6', 'register-file3x6', 'program-counter6', 'instruction-register6', 'instruction-control6', 'cpu-memory-cycle6', 'cpu-control-flow6', 'cpu6', 'cpu-program-loader6', 'memory3x1', 'memory3x6', 'memory9x6', 'memory27x6', 'memory81x6', 'seven-segment-display', 'trit-led', 'binary-led', 'word-display6', 'pixel-display3', 'rgb-display24-addressed', 'rgb-display24-stream', 'word-probe6', 'decimal-debug6', 'probe'];
   const EXPERIMENTAL_PRIMITIVES = ['negate', 'compare', 'select3', 'route3', 'adjust3', 'control3', 'threshold3', 'restore3', 'pass3', 'merge3', 'ternary-reference', 'storage-node3', 'clock-phase3', 'min', 'max', 'normalize-carry'];
   const PRIMITIVE_SETS = {
     all: { label: 'All candidates', description: 'Expose every current ternary primitive candidate.', types: [...EXPERIMENTAL_PRIMITIVES], metadata: { purpose: 'exploration', logicalCostModel: 'sum primitive node costs' } },
@@ -32,7 +33,7 @@
     { label: 'Logic & signal shaping', types: ['negate', 'min', 'max', 'threshold3', 'restore3', 'pass3', 'merge3'] },
     { label: 'Compare & routing', types: ['compare', 'select3', 'route3', 'control3'] },
     { label: 'Arithmetic', types: ['adjust3', 'normalize-carry'] },
-    { label: 'State & timing', types: ['latch3', 'register3', 'register-bank3', 'memory3x1', 'memory3x6', 'memory9x6', 'memory27x6', 'memory81x6', 'storage-node3', 'clock-phase3'] },
+    { label: 'State & timing', types: ['latch3', 'register3', 'register-bank3', 'register-bank3x6', 'register-file3x6', 'program-counter6', 'instruction-register6', 'instruction-control6', 'cpu-memory-cycle6', 'cpu-control-flow6', 'cpu6', 'memory3x1', 'memory3x6', 'memory9x6', 'memory27x6', 'memory81x6', 'storage-node3', 'clock-phase3'] },
   ];
   const primitiveExperiment = { activeId: 'all', customTypes: new Set(EXPERIMENTAL_PRIMITIVES) };
   const PROJECT_FORMAT_VERSION = 6;
@@ -72,6 +73,14 @@
   const pauseBtn = $('pauseBtn');
   const stepBtn = $('stepBtn');
   const clockStepBtn = $('clockStepBtn');
+  const computerControls = $('computerControls');
+  const computerRunBtn = $('computerRunBtn');
+  const computerInstructionBtn = $('computerInstructionBtn');
+  const computerClockBtn = $('computerClockBtn');
+  const loadExampleProgramBtn = $('loadExampleProgramBtn');
+  const importProgramBtn = $('importProgramBtn');
+  const exportProgramBtn = $('exportProgramBtn');
+  const programFile = $('programFile');
   const stateTimelineEl = $('stateTimeline');
   const visualizeSpeed = $('visualizeSpeed');
   const queueCount = $('queueCount');
@@ -441,6 +450,18 @@
         <label class="toggle-row compact"><input id="generatorAuto" type="checkbox"${component.state.auto ? ' checked' : ''} /><span>Auto-run</span></label>
         <div class="selection-actions"><button id="applyGeneratorBtn" type="button">Apply generator</button><button id="advanceGeneratorBtn" type="button">Advance once</button></div>
       </details>`;
+    }
+    if (component.type === 'memory27x6') {
+      const words = Array.isArray(component.state.values) ? component.state.values : [];
+      const glyph = (value) => value === null || value === undefined ? '?' : value === 'Z' ? 'Z' : trit(value) < 0 ? '−' : trit(value) > 0 ? '+' : '0';
+      const rows = Array.from({ length: 27 }, (_, index) => {
+        const word = Array.isArray(words[index]) ? words[index].map(trit) : Array(6).fill(null);
+        const known = word.every((value) => value === -1 || value === 0 || value === 1);
+        const decoded = known ? window.TernaryCore.decodeInstruction6(word) : null;
+        const mnemonic = decoded?.valid ? decoded.mnemonic : known ? 'data / reserved' : 'unwritten';
+        return `<tr><td>${index - 13}</td><td><code>${word.map(glyph).join(' ')}</code></td><td>${esc(mnemonic)}</td></tr>`;
+      }).join('');
+      extra += `<details class="layout-editor" open><summary>Memory program / data list</summary><p>Rows are public Memory 27×6 locations. Mnemonics are a live decode view; a row can also be ordinary data.</p><table class="component-test-table"><thead><tr><th>Address</th><th>Tryte</th><th>Decode</th></tr></thead><tbody>${rows}</tbody></table></details>`;
     }
 
     const logicalCost = def.cost?.logical || {};
@@ -1506,7 +1527,7 @@
     const fallback = { x: renderer.app.screen.width / 2, y: renderer.app.screen.height / 2, scale: 1 };
     renderer.setViewState(viewState || fallback);
     renderer.select(null);
-    resetHistory(); updateStats(); renderLibrary(); renderBreadcrumbs(); renderComponentTestPanel(); hookActiveCircuitEvents();
+    resetHistory(); updateStats(); renderLibrary(); renderBreadcrumbs(); renderComponentTestPanel(); hookActiveCircuitEvents(); updateComputerControls();
   }
 
   function createCustomComponent() {
@@ -1634,7 +1655,17 @@
   function openStructuralImplementation(reference) {
     let meta = structuralReferences.get(reference);
     if (!meta || !customComponents.has(meta.id)) {
-      const references = reference === 'structural-memory81x6-v1'
+      const references = reference === 'structural-instruction-register6-v1'
+        ? buildStructuralInstructionRegisterDemo(false)
+        : reference === 'structural-cpu6-v1'
+        ? buildStructuralCpuArchitecture(false)
+        : reference === 'structural-register-file3x6-v1'
+        ? buildStructuralRegisterFileDemo(false)
+        : reference === 'structural-program-counter6-v1'
+        ? buildStructuralProgramCounterDemo(false)
+        : reference === 'structural-register-bank3x6-v1'
+        ? buildStructuralWordRegisterBankDemo(false)
+        : reference === 'structural-memory81x6-v1'
         ? buildStructuralScaledMemoryDemo(81, false)
         : reference === 'structural-memory27x6-v1'
         ? buildStructuralScaledMemoryDemo(27, false)
@@ -2051,6 +2082,7 @@
     testSuites = [];
     stateTimeline.length = 0;
     if (stateTimelineEl) renderStateTimeline();
+    stopComputerRun(); updateComputerControls();
   }
 
   function buildDemo() {
@@ -2064,6 +2096,13 @@
     if ($('demoSelect').value === 'control-signals') return buildControlSignalsDemo();
     if ($('demoSelect').value === 'sequential-storage') return buildSequentialStorageDemo();
     if ($('demoSelect').value === 'register-bank') return buildRegisterBankDemo();
+    if ($('demoSelect').value === 'word-register-bank') return buildWordRegisterBankDemo();
+    if ($('demoSelect').value === 'program-counter') return buildProgramCounterDemo();
+    if ($('demoSelect').value === 'cpu-datapath') {
+      try { return buildCpuDatapathDemo(); }
+      catch (error) { console.error(error); return setStatus(`Could not load CPU datapath: ${error.message}`, true); }
+    }
+    if ($('demoSelect').value === 'cpu-console') return buildCpuConsoleDemo();
     if ($('demoSelect').value === 'device-cells') return buildDeviceCellsDemo();
     if ($('demoSelect').value === 'seven-segment') return buildSevenSegmentDemo();
     if ($('demoSelect').value === 'one-trit-display') return buildOneTritDisplayDemo();
@@ -2314,6 +2353,142 @@
     rootCircuit.connect(data.id, 'out', bank.id, 'd'); rootCircuit.connect(address.id, 'out', bank.id, 'address'); rootCircuit.connect(action.id, 'out', bank.id, 'action'); rootCircuit.connect(clock.id, 'out', bank.id, 'clock'); rootCircuit.connect(reset.id, 'out', bank.id, 'reset'); rootCircuit.connect(bank.id, 'out', read.id, 'in');
     renderer.select(null); renderLibrary(); updateStats(); resetHistory();
     setStatus('Register bank demo loaded. Action -1 reads, 0 idles and +1 writes on a CLK 0 → +1 transition.');
+  }
+
+  function buildWordRegisterBankDemo() {
+    const data = rootCircuit.addComponent('word-input6', -430, -130, { values: [0, 0, 0, 0, 0, 1], label: 'Write tryte' });
+    const address = rootCircuit.addComponent('trit-input', -430, -30, { value: -1, label: 'Register address' });
+    const action = rootCircuit.addComponent('trit-input', -430, 55, { value: 0, label: 'Action: read / idle / write' });
+    const reset = rootCircuit.addComponent('trit-input', -430, 140, { value: 0, label: 'Reset (+1)' });
+    const clock = rootCircuit.addComponent('trit-input', -430, 225, { value: 0, label: 'CLK (0 / +1)' });
+    const bank = rootCircuit.addComponent('register-bank3x6', 0, 25, { label: 'Three tryte registers' });
+    const display = rootCircuit.addComponent('word-display6', 330, 25, { label: 'Read tryte' });
+    ['5', '4', '3', '2', '1', '0'].forEach((lane) => { rootCircuit.connect(data.id, `t${lane}`, bank.id, `dataIn${lane}`); rootCircuit.connect(bank.id, `dataOut${lane}`, display.id, `t${lane}`); });
+    ['address', 'action', 'clock', 'reset'].forEach((name) => rootCircuit.connect(({ address, action, clock, reset })[name].id, 'out', bank.id, name));
+    renderer.select(null); renderLibrary(); updateStats(); resetHistory();
+    setStatus('6-trit register-bank demo loaded. Action −1 reads one complete tryte, 0 idles and +1 atomically writes the addressed tryte on CLK 0 → +1.');
+  }
+
+  function buildProgramCounterDemo() {
+    const control = rootCircuit.addComponent('trit-input', -360, -80, { value: 0, label: 'PC control: decrement / hold / increment' });
+    const loadData = rootCircuit.addComponent('word-input6', -360, 20, { values: [0, 0, 0, 0, 0, 0], label: 'PC load target' });
+    const load = rootCircuit.addComponent('trit-input', -360, 125, { value: 0, label: 'PC load (+1)' });
+    const clock = rootCircuit.addComponent('trit-input', -360, 205, { value: 0, label: 'CLK (0 / +1)' });
+    const reset = rootCircuit.addComponent('trit-input', -360, 285, { value: 0, label: 'Reset (+1)' });
+    const pc = rootCircuit.addComponent('program-counter6', 0, 0, { label: 'Program counter' });
+    const display = rootCircuit.addComponent('word-display6', 320, -30, { label: 'PC word' });
+    const extension = rootCircuit.addComponent('probe', 320, 105, { label: 'PC extension' });
+    rootCircuit.connect(control.id, 'out', pc.id, 'control'); rootCircuit.connect(load.id, 'out', pc.id, 'load'); rootCircuit.connect(clock.id, 'out', pc.id, 'clock'); rootCircuit.connect(reset.id, 'out', pc.id, 'reset');
+    ['5', '4', '3', '2', '1', '0'].forEach((lane) => rootCircuit.connect(loadData.id, `t${lane}`, pc.id, `loadData${lane}`));
+    ['5', '4', '3', '2', '1', '0'].forEach((lane) => rootCircuit.connect(pc.id, `pc${lane}`, display.id, `t${lane}`));
+    rootCircuit.connect(pc.id, 'extension', extension.id, 'in');
+    renderer.select(null); renderLibrary(); updateStats(); resetHistory();
+    setStatus('6-trit program-counter demo loaded. Reset on CLK 0 → +1; use control −1 / 0 / +1 for normal movement, or set a known target and PC load=+1 to jump on the next edge.');
+  }
+
+  function buildCpuDatapathDemo() {
+    const alu = createSixTritAluCandidate('CPU datapath ALU', 'controlled-operand', true);
+    const label = uniqueName('CPU datapath — 6-trit opening', [...customComponents.values()].map((meta) => meta.label), 'CPU datapath — 6-trit opening');
+    const id = `${slug(label)}-${Date.now().toString(36)}`, inner = new Circuit(registry);
+    const lanes = ['5', '4', '3', '2', '1', '0'];
+    const inputNames = [...lanes.map((lane) => `external${lane}`), 'readAAddress', 'readBAddress', 'writeAddress', 'writeAction', 'aluOperation', 'writeBackSelect', 'clock', 'reset'];
+    const inputs = inputNames.map((name, index) => inner.addComponent('component-input', -680, (index - 6.5) * 44, { name }));
+    const outputs = [...lanes.map((lane, index) => inner.addComponent('component-output', 600, (index - 8.5) * 48, { name: `a${lane}` })), ...lanes.map((lane, index) => inner.addComponent('component-output', 600, (index - 2.5) * 48, { name: `b${lane}` })), ...lanes.map((lane, index) => inner.addComponent('component-output', 600, (index + 3.5) * 48, { name: `result${lane}` })), inner.addComponent('component-output', 600, 300, { name: 'extension' })];
+    const byName = Object.fromEntries(inputs.map((input) => [input.state.name, input]));
+    const file = inner.addComponent('register-file3x6', -260, 0, { label: 'Dual-read register file' });
+    const aluInstance = inner.addComponent(alu.meta.type, 10, 0, { label: 'Selected 6-trit ALU' });
+    const writeBack = lanes.map((lane, index) => inner.addComponent('select3', 245, (index - 2.5) * 58, { label: `Write-back lane ${lane}` }));
+    ['readAAddress', 'readBAddress', 'writeAddress', 'writeAction', 'clock', 'reset'].forEach((name) => inner.connect(byName[name].id, 'out', file.id, name));
+    inner.connect(byName.aluOperation.id, 'out', aluInstance.id, 'operation');
+    inner.connect(byName.writeBackSelect.id, 'out', writeBack[0].id, 'select');
+    lanes.forEach((lane, index) => {
+      if (index > 0) inner.connect(byName.writeBackSelect.id, 'out', writeBack[index].id, 'select');
+      inner.connect(file.id, `readA${lane}`, aluInstance.id, `a${lane}`); inner.connect(file.id, `readB${lane}`, aluInstance.id, `b${lane}`);
+      inner.connect(byName[`external${lane}`].id, 'out', writeBack[index].id, 'neg');
+      inner.connect(file.id, `readA${lane}`, writeBack[index].id, 'zero');
+      inner.connect(aluInstance.id, `r${lane}`, writeBack[index].id, 'pos');
+      inner.connect(writeBack[index].id, 'out', file.id, `dataIn${lane}`);
+      inner.connect(file.id, `readA${lane}`, outputs[index].id, 'in');
+      inner.connect(file.id, `readB${lane}`, outputs[index + 6].id, 'in');
+      inner.connect(aluInstance.id, `r${lane}`, outputs[index + 12].id, 'in');
+    });
+    inner.connect(aluInstance.id, 'extension', outputs[18].id, 'in');
+    const meta = {
+      id, type: `custom:${id}`, label, circuit: inner.serialize(),
+      experiment: {
+        role: 'CPU datapath integration', nodeCount: 26, depth: 10, primitiveCounts: { 'register-file3x6': 1, [alu.meta.type]: 1, select3: 6 },
+        metrics: { nodes: 26, depth: 10, wires: inner.wires.size, transitions: 0, transitionScenario: 'register read, ALU operation and one write-back edge' },
+        rationale: 'The opening datapath keeps both operand reads explicit. Write-back is one packed ternary select: −1 accepts an external future-memory result, 0 moves A unchanged and +1 accepts the selected ALU result. Only writeAction=+1 commits the selected word on the shared clock edge.',
+        validation: 'Register-file and ALU contracts are independently exhaustive; the opening integration is exposed as a reusable component so every data path can be inspected before instruction control is added.',
+      },
+    };
+    customComponents.set(id, meta); registerCustom(meta);
+    const external = rootCircuit.addComponent('word-input6', -670, -250, { values: [0, 0, 0, 0, 0, 0], label: 'External write-back word' });
+    const readA = rootCircuit.addComponent('trit-input', -670, -100, { value: -1, label: 'Read A address' });
+    const readB = rootCircuit.addComponent('trit-input', -670, -35, { value: 0, label: 'Read B address' });
+    const writeAddress = rootCircuit.addComponent('trit-input', -670, 30, { value: 1, label: 'Write address' });
+    const writeAction = rootCircuit.addComponent('trit-input', -670, 95, { value: 0, label: 'Write action (+1)' });
+    const operation = rootCircuit.addComponent('trit-input', -670, 160, { value: 1, label: 'ALU op' });
+    const writeBackSelect = rootCircuit.addComponent('trit-input', -670, 225, { value: 1, label: 'Write-back: external / A / ALU' });
+    const clock = rootCircuit.addComponent('trit-input', -670, 290, { value: 0, label: 'CLK (0 / +1)' });
+    const reset = rootCircuit.addComponent('trit-input', -670, 355, { value: 0, label: 'Reset (+1)' });
+    const instance = rootCircuit.addComponent(meta.type, -30, -300, { label });
+    const aDisplay = rootCircuit.addComponent('word-display6', 420, -240, { label: 'Operand A' });
+    const bDisplay = rootCircuit.addComponent('word-display6', 420, 0, { label: 'Operand B' });
+    const resultDisplay = rootCircuit.addComponent('word-display6', 420, 240, { label: 'ALU result' });
+    const extension = rootCircuit.addComponent('probe', 420, 405, { label: 'ALU extension' });
+    lanes.forEach((lane) => { rootCircuit.connect(external.id, `t${lane}`, instance.id, `external${lane}`); rootCircuit.connect(instance.id, `a${lane}`, aDisplay.id, `t${lane}`); rootCircuit.connect(instance.id, `b${lane}`, bDisplay.id, `t${lane}`); rootCircuit.connect(instance.id, `result${lane}`, resultDisplay.id, `t${lane}`); });
+    [[readA, 'readAAddress'], [readB, 'readBAddress'], [writeAddress, 'writeAddress'], [writeAction, 'writeAction'], [operation, 'aluOperation'], [writeBackSelect, 'writeBackSelect'], [clock, 'clock'], [reset, 'reset']].forEach(([source, port]) => rootCircuit.connect(source.id, 'out', instance.id, port));
+    rootCircuit.connect(instance.id, 'extension', extension.id, 'in');
+    renderer.select(null); renderLibrary(); updateStats(); resetHistory();
+    setStatus('Opening CPU datapath loaded. Reset on a clock edge, inspect two register reads and the ALU, then select external / A / ALU write-back and assert write action on the next edge.');
+  }
+
+  function buildCpuConsoleDemo() {
+    const lanes = ['5', '4', '3', '2', '1', '0'];
+    const clock = rootCircuit.addComponent('sequence-generator', -610, -220, { sequence: [0, 1], mode: 'loop', auto: false, label: 'Computer clock (CLOCK STEP)' });
+    const reset = rootCircuit.addComponent('trit-input', -610, -120, { value: 0, label: 'Memory reset (+1)' });
+    const loader = rootCircuit.addComponent('cpu-program-loader6', -360, -210, { label: '18C example-program loader' });
+    const cpu = rootCircuit.addComponent('cpu6', -80, -210, { label: 'Opening ternary Computer' });
+    const memory = rootCircuit.addComponent('memory27x6', 250, -210, { label: 'Program / data memory 27×6' });
+    const pc = rootCircuit.addComponent('word-display6', 560, -225, { label: 'PC' });
+    const rNeg = rootCircuit.addComponent('word-display6', 560, -80, { label: 'R−' });
+    const rZero = rootCircuit.addComponent('word-display6', 560, 65, { label: 'R0' });
+    const rPos = rootCircuit.addComponent('word-display6', 560, 210, { label: 'R+' });
+    const instruction = rootCircuit.addComponent('word-display6', 560, 355, { label: 'Instruction register' });
+    const phase = rootCircuit.addComponent('probe', 250, 190, { label: 'CPU phase: fetch / execute / halted' });
+    const halt = rootCircuit.addComponent('probe', 250, 265, { label: 'HALTED (+1)' });
+    rootCircuit.connect(clock.id, 'out', loader.id, 'clock'); rootCircuit.connect(clock.id, 'out', cpu.id, 'clock'); rootCircuit.connect(clock.id, 'out', memory.id, 'clock'); rootCircuit.connect(reset.id, 'out', memory.id, 'reset'); rootCircuit.connect(loader.id, 'cpuReset', cpu.id, 'reset');
+    const mux = (name, loaderPort, cpuPort, memoryPort, y) => { const select = rootCircuit.addComponent('select3', 70, y, { label: `Program loader / CPU ${name}` }); rootCircuit.connect(loader.id, 'done', select.id, 'select'); rootCircuit.connect(loader.id, loaderPort, select.id, 'zero'); rootCircuit.connect(cpu.id, cpuPort, select.id, 'pos'); rootCircuit.connect(select.id, 'out', memory.id, memoryPort); };
+    ['2', '1', '0'].forEach((lane, index) => mux(`address ${lane}`, `address${lane}`, `address${lane}`, `address${lane}`, -335 + index * 55));
+    mux('action', 'action', 'memoryAction', 'action', -150);
+    lanes.forEach((lane, index) => { mux(`data ${lane}`, `data${lane}`, `memoryWrite${lane}`, `dataIn${lane}`, -60 + index * 55); rootCircuit.connect(memory.id, `dataOut${lane}`, cpu.id, `memoryData${lane}`); rootCircuit.connect(cpu.id, `pc${lane}`, pc.id, `t${lane}`); rootCircuit.connect(cpu.id, `rNeg${lane}`, rNeg.id, `t${lane}`); rootCircuit.connect(cpu.id, `rZero${lane}`, rZero.id, `t${lane}`); rootCircuit.connect(cpu.id, `rPos${lane}`, rPos.id, `t${lane}`); rootCircuit.connect(cpu.id, `instruction${lane}`, instruction.id, `t${lane}`); });
+    rootCircuit.connect(cpu.id, 'phase', phase.id, 'in'); rootCircuit.connect(cpu.id, 'halted', halt.id, 'in');
+    renderer.select(null); renderLibrary(); updateStats(); resetHistory();
+    setStatus('Runnable CPU console loaded. The example loader writes six program words through Memory 27×6, then releases the CPU automatically. Run computer now executes LIT, ADD, STORE, LOAD and HALT; select Memory 27×6 to inspect its program list.');
+  }
+
+  function buildStructuralCpuArchitecture(loadDemo = false) {
+    const label = uniqueName('Opening CPU — architecture reference', [...customComponents.values()].map((meta) => meta.label), 'Opening CPU — architecture reference');
+    const id = `${slug(label)}-${Date.now().toString(36)}`, inner = new Circuit(registry);
+    const lanes = ['5', '4', '3', '2', '1', '0'];
+    const clock = inner.addComponent('component-input', -620, -220, { name: 'clock' });
+    const reset = inner.addComponent('component-input', -620, -150, { name: 'reset' });
+    const memory = lanes.map((lane, index) => inner.addComponent('component-input', -620, -70 + index * 45, { name: `memoryData${lane}` }));
+    const pc = inner.addComponent('program-counter6', -310, -210, { label: 'Program counter' });
+    const sequencer = inner.addComponent('cpu-sequencer3', -310, 20, { label: 'Fetch / execute sequencer' });
+    const instruction = inner.addComponent('instruction-register6', -60, -170, { label: 'Instruction register' });
+    const control = inner.addComponent('instruction-control6', 180, -170, { label: 'Instruction decode / control' });
+    const registers = inner.addComponent('register-file3x6', 180, 90, { label: 'Dual-read register file' });
+    const timing = inner.addComponent('cpu-memory-cycle6', 410, -70, { label: 'Memory-cycle timing' });
+    const flow = inner.addComponent('cpu-control-flow6', 410, 130, { label: 'Branch / PC control' });
+    const port = inner.addComponent('cpu-memory-port27', 650, 20, { label: 'Memory 27×6 port' });
+    [pc, sequencer, instruction, registers].forEach((component) => { inner.connect(clock.id, 'out', component.id, 'clock'); inner.connect(reset.id, 'out', component.id, 'reset'); });
+    lanes.forEach((lane, index) => { inner.connect(memory[index].id, 'out', instruction.id, `instruction${lane}`); inner.connect(instruction.id, `instruction${lane}`, control.id, `instruction${lane}`); });
+    inner.connect(sequencer.id, 'phase', control.id, 'phase'); inner.connect(sequencer.id, 'phase', timing.id, 'phase'); inner.connect(control.id, 'memoryAction', timing.id, 'executeAction'); inner.connect(control.id, 'registerWrite', timing.id, 'executeRegisterWrite');
+    const meta = { id, type: `custom:${id}`, label, circuit: inner.serialize(), experiment: { role: 'documented CPU architecture reference', nodeCount: 8, depth: 5, primitiveCounts: { 'program-counter6': 1, 'cpu-sequencer3': 1, 'instruction-register6': 1, 'instruction-control6': 1, 'register-file3x6': 1, 'cpu-memory-cycle6': 1, 'cpu-control-flow6': 1, 'cpu-memory-port27': 1 }, rationale: 'This is the inspectable architecture map for the accelerated CPU machine boundary. Each named state, control and memory subsystem retains its own public contract and documented structural reference where available.', validation: 'The CPU6 machine contract exercises the corresponding public PC, register, control and memory transitions end-to-end.' } };
+    customComponents.set(id, meta); registerCustom(meta); structuralReferences.set('structural-cpu6-v1', meta);
+    return { 'structural-cpu6-v1': meta };
   }
 
   function buildDeviceCellsDemo() {
@@ -3251,6 +3426,149 @@
     return references;
   }
 
+  function buildStructuralWordRegisterBankDemo(loadDemo = true) {
+    const lane = buildStructuralRegisterBankDemo(false)['structural-register-bank3-v1'];
+    const label = uniqueName('6-trit register bank — structural', [...customComponents.values()].map((meta) => meta.label), '6-trit register bank — structural');
+    const id = `${slug(label)}-${Date.now().toString(36)}`, inner = new Circuit(registry);
+    const lanes = ['5', '4', '3', '2', '1', '0'];
+    const names = [...lanes.map((laneName) => `dataIn${laneName}`), 'address', 'action', 'clock', 'reset'];
+    const inputs = names.map((name, index) => inner.addComponent('component-input', -460, (index - 5) * 55, { name }));
+    const outputs = lanes.map((laneName, index) => inner.addComponent('component-output', 420, (index - 2.5) * 65, { name: `dataOut${laneName}` }));
+    const byName = Object.fromEntries(inputs.map((input) => [input.state.name, input]));
+    const banks = lanes.map((laneName, index) => inner.addComponent(lane.type, 0, (index - 2.5) * 65, { label: `Register lane ${laneName}` }));
+    banks.forEach((bank, index) => {
+      const laneName = lanes[index];
+      inner.connect(byName[`dataIn${laneName}`].id, 'out', bank.id, 'd');
+      ['address', 'action', 'clock', 'reset'].forEach((name) => inner.connect(byName[name].id, 'out', bank.id, name));
+      inner.connect(bank.id, 'out', outputs[index].id, 'in');
+    });
+    const meta = {
+      id, type: `custom:${id}`, label, circuit: inner.serialize(),
+      experiment: {
+        role: 'structural reference', equivalence: { directType: 'register-bank3x6', sequences: [] }, nodeCount: 6, depth: 1,
+        primitiveCounts: { [lane.type]: 6 }, metrics: { nodes: 6, depth: 1, wires: inner.wires.size, transitions: 0, transitionScenario: 'one addressed word write from reset' },
+        rationale: 'Six aligned structural three-register banks share address, packed action, clock and reset. One selected register receives all six data lanes on the same edge, so a tryte cannot become a mixture of old and new lanes.',
+        validation: 'The direct register-bank contract exhaustively verifies all 729 trytes at every register address; the structural reference retains the same public port and edge semantics.',
+      },
+    };
+    customComponents.set(id, meta); registerCustom(meta); structuralReferences.set('structural-register-bank3x6-v1', meta);
+    if (!loadDemo) return { 'structural-register-bank3x6-v1': meta };
+    rootCircuit.clear(); rootCircuit.addComponent(meta.type, 0, 0, { label }); renderer.select(null); renderLibrary(); updateStats(); resetHistory();
+    setStatus('Structural 6-trit register bank loaded. Open it to inspect the six aligned structural register-bank lanes.');
+    return { 'structural-register-bank3x6-v1': meta };
+  }
+
+  function buildStructuralRegisterFileDemo(loadDemo = true) {
+    const storageReferences = buildStructuralStorageDemo(false);
+    const routingReferences = buildStructuralRoutingDemo(false);
+    const registerType = storageReferences['structural-register-v1'].type;
+    const controlType = routingReferences['structural-control3-v1'].type;
+    const selectType = routingReferences['structural-select3-v1'].type;
+    const label = uniqueName('6-trit dual-read register file — structural', [...customComponents.values()].map((meta) => meta.label), '6-trit dual-read register file — structural');
+    const id = `${slug(label)}-${Date.now().toString(36)}`, inner = new Circuit(registry);
+    const lanes = ['5', '4', '3', '2', '1', '0'], branches = ['neg', 'zero', 'pos'];
+    const inputNames = [...lanes.map((lane) => `dataIn${lane}`), 'readAAddress', 'readBAddress', 'writeAddress', 'writeAction', 'clock', 'reset'];
+    const inputs = inputNames.map((name, index) => inner.addComponent('component-input', -650, (index - 5.5) * 46, { name }));
+    const outputs = [...lanes.map((lane, index) => inner.addComponent('component-output', 590, (index - 5.5) * 50, { name: `readA${lane}` })), ...lanes.map((lane, index) => inner.addComponent('component-output', 590, (index + 0.5) * 50, { name: `readB${lane}` }))];
+    const byName = Object.fromEntries(inputs.map((input) => [input.state.name, input]));
+    const decode = inner.addComponent(controlType, -410, 30, { label: 'Decode write address' });
+    const writePasses = branches.map((branch, index) => inner.addComponent('pass3', -220, (index - 1) * 80, { label: `${branch} write enable` }));
+    inner.connect(byName.writeAddress.id, 'out', decode.id, 'control');
+    branches.forEach((branch, index) => { inner.connect(decode.id, branch, writePasses[index].id, 'in'); inner.connect(byName.writeAction.id, 'out', writePasses[index].id, 'gate'); });
+    lanes.forEach((lane, laneIndex) => {
+      const registers = branches.map((branch, index) => inner.addComponent(registerType, 20, laneIndex * 260 + (index - 1) * 75 - 625, { label: `${branch} register lane ${lane}` }));
+      const readA = inner.addComponent(selectType, 290, laneIndex * 50 - 275, { label: `Read A lane ${lane}` });
+      const readB = inner.addComponent(selectType, 290, laneIndex * 50 + 45, { label: `Read B lane ${lane}` });
+      registers.forEach((register, index) => {
+        inner.connect(byName[`dataIn${lane}`].id, 'out', register.id, 'd');
+        inner.connect(writePasses[index].id, 'out', register.id, 'load');
+        inner.connect(byName.clock.id, 'out', register.id, 'clock'); inner.connect(byName.reset.id, 'out', register.id, 'reset');
+        inner.connect(register.id, 'q', readA.id, branches[index]); inner.connect(register.id, 'q', readB.id, branches[index]);
+      });
+      inner.connect(byName.readAAddress.id, 'out', readA.id, 'select'); inner.connect(byName.readBAddress.id, 'out', readB.id, 'select');
+      inner.connect(readA.id, 'out', outputs[laneIndex].id, 'in'); inner.connect(readB.id, 'out', outputs[laneIndex + 6].id, 'in');
+    });
+    const meta = {
+      id, type: `custom:${id}`, label, circuit: inner.serialize(),
+      experiment: {
+        role: 'structural reference', equivalence: { directType: 'register-file3x6', sequences: [] }, nodeCount: 33, depth: 4,
+        primitiveCounts: { [registerType]: 18, [controlType]: 1, pass3: 3, [selectType]: 12 }, metrics: { nodes: 33, depth: 4, wires: inner.wires.size, transitions: 0, transitionScenario: 'one write with two addressed reads' },
+        rationale: 'Eighteen structural registers form three six-trit words. One packed write action is decoded only for the write address; two independent structural Select3 paths expose operands A and B without duplicating state.',
+        validation: 'The direct register-file contract verifies every word write and independent read addresses. The structural form has the same reset and shared-edge semantics.',
+      },
+    };
+    customComponents.set(id, meta); registerCustom(meta); structuralReferences.set('structural-register-file3x6-v1', meta);
+    if (!loadDemo) return { 'structural-register-file3x6-v1': meta };
+    rootCircuit.clear(); rootCircuit.addComponent(meta.type, 0, 0, { label }); renderer.select(null); renderLibrary(); updateStats(); resetHistory();
+    setStatus('Structural dual-read 6-trit register file loaded. Open it to inspect the shared write decoder and separate A/B Select3 read paths.');
+    return { 'structural-register-file3x6-v1': meta };
+  }
+
+  function buildStructuralInstructionRegisterDemo(loadDemo = true) {
+    const registerType = buildStructuralStorageDemo(false)['structural-register-v1'].type;
+    const label = uniqueName('6-trit instruction register — structural', [...customComponents.values()].map((meta) => meta.label), '6-trit instruction register — structural');
+    const id = `${slug(label)}-${Date.now().toString(36)}`, inner = new Circuit(registry);
+    const lanes = ['5', '4', '3', '2', '1', '0'];
+    const inputs = [...lanes.map((lane) => `instruction${lane}`), 'load', 'clock', 'reset'].map((name, index) => inner.addComponent('component-input', -420, (index - 4.5) * 60, { name }));
+    const outputs = lanes.map((lane, index) => inner.addComponent('component-output', 360, (index - 2.5) * 70, { name: `instruction${lane}` }));
+    const byName = Object.fromEntries(inputs.map((input) => [input.state.name, input]));
+    lanes.forEach((lane, index) => {
+      const register = inner.addComponent(registerType, 0, (index - 2.5) * 70, { label: `Instruction lane ${lane}` });
+      inner.connect(byName[`instruction${lane}`].id, 'out', register.id, 'd'); inner.connect(byName.load.id, 'out', register.id, 'load'); inner.connect(byName.clock.id, 'out', register.id, 'clock'); inner.connect(byName.reset.id, 'out', register.id, 'reset'); inner.connect(register.id, 'q', outputs[index].id, 'in');
+    });
+    const meta = { id, type: `custom:${id}`, label, circuit: inner.serialize(), experiment: { role: 'structural reference', equivalence: { directType: 'instruction-register6', sequences: [] }, nodeCount: 6, depth: 1, primitiveCounts: { [registerType]: 6 }, metrics: { nodes: 6, depth: 1, wires: inner.wires.size, transitions: 0, transitionScenario: 'one instruction fetch edge' }, rationale: 'Six structural registers capture one complete instruction only when fetch-load is +1 on the shared edge.', validation: 'The instruction-register contract covers load, hold, reset and invalid inputs.' } };
+    customComponents.set(id, meta); registerCustom(meta); structuralReferences.set('structural-instruction-register6-v1', meta);
+    if (!loadDemo) return { 'structural-instruction-register6-v1': meta };
+    rootCircuit.clear(); rootCircuit.addComponent(meta.type, 0, 0, { label }); renderer.select(null); renderLibrary(); updateStats(); resetHistory(); return { 'structural-instruction-register6-v1': meta };
+  }
+
+  function buildStructuralProgramCounterDemo(loadDemo = true) {
+    const storageReferences = buildStructuralStorageDemo(false);
+    const routingReferences = buildStructuralRoutingDemo(false);
+    const registerType = storageReferences['structural-register-v1'].type;
+    const adjustType = routingReferences['structural-adjust3-v1'].type;
+    const label = uniqueName('6-trit program counter — structural', [...customComponents.values()].map((meta) => meta.label), '6-trit program counter — structural');
+    const id = `${slug(label)}-${Date.now().toString(36)}`, inner = new Circuit(registry);
+    const lanes = ['5', '4', '3', '2', '1', '0'];
+    const inputs = ['control', ...lanes.map((lane) => `loadData${lane}`), 'load', 'clock', 'reset'].map((name, index) => inner.addComponent('component-input', -500, (index - 4.5) * 58, { name }));
+    const outputs = lanes.map((lane, index) => inner.addComponent('component-output', 470, (index - 2.5) * 68, { name: `pc${lane}` }));
+    const extension = inner.addComponent('component-output', 470, 250, { name: 'extension' });
+    const byName = Object.fromEntries(inputs.map((input) => [input.state.name, input]));
+    const load = inner.addComponent('ternary-reference', -310, 255, { value: 1, label: 'Always load on PC edge' });
+    const zero = inner.addComponent('ternary-reference', 260, 300, { value: 0, label: 'Zero extension after jump' });
+    const registers = lanes.map((lane, index) => inner.addComponent(registerType, 120, (index - 2.5) * 68, { label: `PC register ${lane}` }));
+    const adjusts = lanes.map((lane, index) => inner.addComponent(adjustType, -90, (index - 2.5) * 68, { label: `Adjust PC lane ${lane}` }));
+    const nextSelectors = lanes.map((lane, index) => inner.addComponent('select3', 15, (index - 2.5) * 68, { label: `Choose PC lane ${lane}` }));
+    for (let index = lanes.length - 1; index >= 0; index -= 1) {
+      inner.connect(registers[index].id, 'q', adjusts[index].id, 'value');
+      if (index === lanes.length - 1) inner.connect(byName.control.id, 'out', adjusts[index].id, 'control');
+      else inner.connect(adjusts[index + 1].id, 'carry', adjusts[index].id, 'control');
+      inner.connect(adjusts[index].id, 'next', nextSelectors[index].id, 'neg'); inner.connect(adjusts[index].id, 'next', nextSelectors[index].id, 'zero');
+      inner.connect(byName[`loadData${lanes[index]}`].id, 'out', nextSelectors[index].id, 'pos'); inner.connect(byName.load.id, 'out', nextSelectors[index].id, 'select');
+      inner.connect(nextSelectors[index].id, 'out', registers[index].id, 'd');
+      inner.connect(load.id, 'out', registers[index].id, 'load');
+      inner.connect(byName.clock.id, 'out', registers[index].id, 'clock');
+      inner.connect(byName.reset.id, 'out', registers[index].id, 'reset');
+      inner.connect(registers[index].id, 'q', outputs[index].id, 'in');
+    }
+    const extensionSelect = inner.addComponent('select3', 280, 245, { label: 'Choose jump extension' });
+    inner.connect(adjusts[0].id, 'carry', extensionSelect.id, 'neg'); inner.connect(adjusts[0].id, 'carry', extensionSelect.id, 'zero'); inner.connect(zero.id, 'out', extensionSelect.id, 'pos'); inner.connect(byName.load.id, 'out', extensionSelect.id, 'select'); inner.connect(extensionSelect.id, 'out', extension.id, 'in');
+    const meta = {
+      id, type: `custom:${id}`, label, circuit: inner.serialize(),
+      experiment: {
+        role: 'structural reference', equivalence: { directType: 'program-counter6', sequences: [] }, nodeCount: 21, depth: 8,
+        primitiveCounts: { [registerType]: 6, [adjustType]: 6, select3: 7, 'ternary-reference': 2 }, metrics: { nodes: 21, depth: 8, wires: inner.wires.size, transitions: 0, transitionScenario: 'one PC increment and one PC load from reset' },
+        rationale: 'The least-significant lane receives the packed decrement/hold/increment control. Each Adjust3 carry becomes the next lane control; a six-lane Select3 boundary replaces that next value with LoadData only when PC load is +1, then the registers capture together on the shared edge.',
+        validation: 'The direct PC contract covers all 729 current values, all three controls, canonical wrap, PC load and synchronous reset; this reference preserves that port and state-boundary structure.',
+      },
+    };
+    customComponents.set(id, meta); registerCustom(meta); structuralReferences.set('structural-program-counter6-v1', meta);
+    if (!loadDemo) return { 'structural-program-counter6-v1': meta };
+    rootCircuit.clear(); rootCircuit.addComponent(meta.type, 0, 0, { label }); renderer.select(null); renderLibrary(); updateStats(); resetHistory();
+    setStatus('Structural 6-trit program counter loaded. Open it to follow the carry chain from PC t0 toward PC t5 and the six shared-edge registers.');
+    return { 'structural-program-counter6-v1': meta };
+  }
+
   function buildStructuralMemoryDemo(loadDemo = true) {
     const bank = buildStructuralRegisterBankDemo(false)['structural-register-bank3-v1'];
     const label = uniqueName('Memory 3×1 — structural', [...customComponents.values()].map((meta) => meta.label), 'Memory 3×1 — structural');
@@ -3663,6 +3981,86 @@
     } catch (error) { setStatus(error.message, true); }
   }
 
+  function computerConsoleContext() {
+    if (current.kind !== 'root') return null;
+    const cpu = [...rootCircuit.components.values()].find((component) => component.type === 'cpu6');
+    const clock = [...rootCircuit.components.values()].find((component) => component.type === 'sequence-generator' && String(component.state?.label || '').startsWith('Computer clock'));
+    const loader = [...rootCircuit.components.values()].find((component) => component.type === 'cpu-program-loader6');
+    return cpu && clock && loader ? { cpu, clock, loader } : null;
+  }
+
+  const PROGRAM_FORMAT = 'ternary-program';
+  const exampleProgram = () => ({ format: PROGRAM_FORMAT, version: 1, name: '18C arithmetic and memory', description: 'LIT −4 and +1, ADD, STORE, LOAD, then HALT.', words: [
+    { address: 0, word: [1, -1, -1, -1, -1, -1], label: 'LIT R−, −, −' }, { address: 1, word: [1, -1, -1, 0, 0, 1], label: 'LIT R0, 0, +' }, { address: 2, word: [-1, -1, 1, 1, 0, 0], label: 'ADD R+, R0, R0' }, { address: 3, word: [-1, 0, 1, 0, -1, 1], label: 'STORE [R−], R+' }, { address: 4, word: [-1, 0, 0, 0, -1, 0], label: 'LOAD R0, [R−]' }, { address: 5, word: [-1, -1, -1, 0, 0, 0], label: 'HALT' },
+  ] });
+  function normalizeProgram(data) {
+    if (!data || data.format !== PROGRAM_FORMAT || Number(data.version) !== 1 || !Array.isArray(data.words)) throw new Error('Unsupported program file.');
+    const words = data.words.map((entry) => ({ address: Number(entry.address), word: Array.isArray(entry.word) ? entry.word.map(trit) : [], label: String(entry.label || '') })).filter((entry) => Number.isInteger(entry.address) && entry.address >= -13 && entry.address <= 13 && entry.word.length === 6 && entry.word.every((value) => value === -1 || value === 0 || value === 1));
+    if (!words.length || new Set(words.map((entry) => entry.address)).size !== words.length) throw new Error('A program needs unique valid Memory 27×6 addresses and six known trits per word.');
+    return { format: PROGRAM_FORMAT, version: 1, name: String(data.name || 'Untitled program'), description: String(data.description || ''), words: words.sort((a, b) => a.address - b.address) };
+  }
+  function loadProgram(data) {
+    const context = computerConsoleContext();
+    if (!context) return setStatus('Open Runnable CPU console before loading a program.', true);
+    const program = normalizeProgram(data);
+    stopComputerRun(); rootCircuit.setState(context.loader.id, { program: program.words, programName: program.name, index: 0, active: true }); rootCircuit.simulate();
+    for (let step = 0; step < program.words.length * 2; step += 1) computerClockStep({ announce: false });
+    setStatus(`Loaded “${program.name}” through Memory 27×6. CPU is reset at PC 0 and has not executed; inspect the memory list, then Run computer or Instruction step.`);
+  }
+  async function importProgram() {
+    const file = programFile.files?.[0]; if (!file) return;
+    try { loadProgram(JSON.parse(await file.text())); } catch (error) { setStatus(`Program import failed: ${error.message}`, true); } finally { programFile.value = ''; }
+  }
+  function exportProgram() {
+    const context = computerConsoleContext(); if (!context) return setStatus('Open Runnable CPU console before exporting a program.', true);
+    const program = normalizeProgram({ ...exampleProgram(), name: context.loader.state.programName || 'Loaded program', words: context.loader.state.program || [] });
+    downloadJson(`${slug(program.name) || 'ternary-program'}.ternary-program.json`, program); setStatus(`Exported “${program.name}”.`);
+  }
+
+  function stopComputerRun() {
+    if (computerRunTimer) clearInterval(computerRunTimer);
+    computerRunTimer = null;
+    if (computerRunBtn) computerRunBtn.textContent = 'Run computer';
+  }
+
+  function updateComputerControls() {
+    if (!computerControls) return;
+    const available = Boolean(computerConsoleContext());
+    computerControls.hidden = !available;
+    if (!available) stopComputerRun();
+    else computerRunBtn.textContent = computerRunTimer ? 'Stop computer' : 'Run computer';
+  }
+
+  function computerClockStep({ announce = true } = {}) {
+    const context = computerConsoleContext();
+    if (!context) return false;
+    rootCircuit.advanceSequenceGenerator(context.clock, 'computer clock');
+    rootCircuit.simulate();
+    updateStats(); renderQueueInspector();
+    if (announce) setStatus('Computer clock advanced once. This is separate from simulator propagation stepping.');
+    return true;
+  }
+
+  function computerInstructionStep() {
+    const context = computerConsoleContext();
+    if (!context) return setStatus('Open Runnable CPU console before stepping the computer.', true);
+    // A complete instruction occupies one fetch edge and one execute edge;
+    // the intervening falling transitions return the shared clock to zero.
+    for (let edge = 0; edge < 4; edge += 1) computerClockStep({ announce: false });
+    setStatus(context.cpu.outputs.halted === 1 ? 'Instruction step completed: computer is halted.' : 'Instruction step completed: one fetch/execute pair ran.');
+  }
+
+  function toggleComputerRun() {
+    if (computerRunTimer) { stopComputerRun(); setStatus('Computer run stopped.'); return; }
+    if (!computerConsoleContext()) return setStatus('Open Runnable CPU console before running the computer.', true);
+    computerRunTimer = setInterval(() => {
+      const context = computerConsoleContext();
+      if (!context || context.cpu.outputs.halted === 1) { stopComputerRun(); if (context?.cpu.outputs.halted === 1) setStatus('Computer halted.'); return; }
+      computerInstructionStep();
+    }, 180);
+    updateComputerControls(); setStatus('Computer running instruction-by-instruction.');
+  }
+
   function startGeneratorTimer() {
     if (simulation.generatorTimer) clearInterval(simulation.generatorTimer);
     simulation.generatorLastTick = performance.now();
@@ -3694,7 +4092,11 @@
     on('settled', () => { updateStats(); refreshComponentTestPanel(); renderQueueInspector(); });
     on('simulation-error', (error) => setStatus(error.message, true));
     on('state-staged', ({ componentId, patch }) => addStateTimeline('stage', componentId, Object.entries(patch).map(([key, value]) => `${key}=${Array.isArray(value) ? `[${value.map(fmtTimelineValue).join(', ')}]` : fmtTimelineValue(value)}`).join(' · ')));
-    on('state-committed', ({ changes }) => changes.forEach((change) => addStateTimeline('commit', change.componentId, `value ${fmtTimelineValue(change.before.value)} → ${fmtTimelineValue(change.after.value)}`)));
+    on('state-committed', ({ changes }) => {
+      changes.forEach((change) => addStateTimeline('commit', change.componentId, `value ${fmtTimelineValue(change.before.value)} → ${fmtTimelineValue(change.after.value)}`));
+      const selectedMemory = changes.find((change) => circuit().components.get(change.componentId)?.type === 'memory27x6' && renderer.selection?.kind === 'component' && renderer.selection.id === change.componentId);
+      if (selectedMemory) updateInspector({ kind: 'component', id: selectedMemory.componentId, item: circuit().components.get(selectedMemory.componentId) });
+    });
     on('clock-step', ({ clocks }) => { stateTimeline.push({ kind: 'clock', label: 'Clock step', detail: `${clocks.length} source${clocks.length === 1 ? '' : 's'} advanced` }); renderStateTimeline(); });
     updateStats();
     renderQueueInspector();
@@ -3757,6 +4159,13 @@
     pauseBtn.addEventListener('click', togglePause);
     stepBtn.addEventListener('click', stepOnce);
     clockStepBtn.addEventListener('click', clockStep);
+    computerRunBtn.addEventListener('click', toggleComputerRun);
+    computerInstructionBtn.addEventListener('click', computerInstructionStep);
+    computerClockBtn.addEventListener('click', () => computerClockStep());
+    loadExampleProgramBtn.addEventListener('click', () => loadProgram(exampleProgram()));
+    importProgramBtn.addEventListener('click', () => programFile.click());
+    exportProgramBtn.addEventListener('click', exportProgram);
+    programFile.addEventListener('change', importProgram);
     $('clearTimelineBtn').addEventListener('click', clearStateTimeline);
     visualizeSpeed.addEventListener('change', () => { if (simulation.mode === 'visualize') scheduleVisualizeStep(); });
     $('animateSignals').addEventListener('change', (e) => { renderer.animateSignals = e.target.checked; });
