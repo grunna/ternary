@@ -8,6 +8,16 @@ The current six-trit CPU instruction reference is in [ISA.md](ISA.md).
 
 A static balanced-ternary circuit simulator built with plain JavaScript and PixiJS. No TypeScript, npm, bundler or backend is required.
 
+## In the simulator
+
+<p align="center">
+  <img src="screenshot/small-computer.png" alt="Ternary Lab running the interactive ternary CPU with program memory, joystick and 3×3 pixel display" width="900" />
+</p>
+
+<p align="center">
+  <img src="screenshot/7seg-display.png" alt="Inspectable structural 3-trit signed display decoder in Ternary Lab" width="900" />
+</p>
+
 ## Architecture promise
 
 Ternary Lab may use fast simulator implementations, but they must never be opaque magic blocks. Every high-level component is intended to have an inspectable structural construction from lower-level ternary parts, ending at the project’s technology-neutral cell boundary. Optimized execution is only an accelerator for that same behavior and must be verified against its structural version. The simulator stops above actual transistor and voltage modeling; “physically viable” means structurally realizable in principle, ready for a later technology mapping. Read the evolving policy in [ARCHITECTURE.md](ARCHITECTURE.md).
