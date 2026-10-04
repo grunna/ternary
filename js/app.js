@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  const { Circuit, registry, makeCustomDefinition, boundaryPorts, slug, clone, normalizeSequence, trit } = window.TernaryCore;
+  const { Circuit, registry, makeCustomDefinition, boundaryPorts, slug, clone, normalizeSequence, trit, CPU_OPCODES } = window.TernaryCore;
   const { ProjectStorage } = window.TernaryStorage;
   const { CircuitRenderer } = window.TernaryRenderer;
 
@@ -19,7 +19,7 @@
 
   const simulation = { mode: 'run', previousMode: 'run', timer: null, generatorTimer: null, generatorLastTick: performance.now(), activeUnsubscribers: [] };
 
-  const UTILITY_PRIMITIVES = ['trit-input', 'word-input6', 'input-button3', 'input-joystick3', 'input-joystick6', 'ternary-reference', 'sequence-generator', 'latch3', 'register3', 'register-bank3', 'register-bank3x6', 'register-file3x6', 'program-counter6', 'instruction-register6', 'instruction-control6', 'cpu-memory-cycle6', 'cpu-control-flow6', 'cpu6', 'cpu-program-loader6', 'memory3x1', 'memory3x6', 'memory9x6', 'memory27x6', 'memory81x6', 'seven-segment-display', 'trit-led', 'binary-led', 'word-display6', 'pixel-display3', 'rgb-display24-addressed', 'rgb-display24-stream', 'word-probe6', 'decimal-debug6', 'probe'];
+  const UTILITY_PRIMITIVES = ['trit-input', 'word-input6', 'input-button3', 'input-joystick3', 'input-joystick6', 'ternary-reference', 'sequence-generator', 'latch3', 'register3', 'register-bank3', 'register-bank3x6', 'register-file3x6', 'program-counter6', 'instruction-register6', 'instruction-control6', 'cpu-memory-cycle6', 'cpu-control-flow6', 'cpu6', 'cpu-program-loader6', 'cpu-io-adapter3x3', 'memory3x1', 'memory3x6', 'memory9x6', 'memory27x6', 'memory81x6', 'memory243x6', 'memory729x6', 'seven-segment-display', 'trit-led', 'binary-led', 'word-display6', 'pixel-display3', 'rgb-display24-addressed', 'rgb-display24-stream', 'word-probe6', 'decimal-debug6', 'probe'];
   const EXPERIMENTAL_PRIMITIVES = ['negate', 'compare', 'select3', 'route3', 'adjust3', 'control3', 'threshold3', 'restore3', 'pass3', 'merge3', 'ternary-reference', 'storage-node3', 'clock-phase3', 'min', 'max', 'normalize-carry'];
   const PRIMITIVE_SETS = {
     all: { label: 'All candidates', description: 'Expose every current ternary primitive candidate.', types: [...EXPERIMENTAL_PRIMITIVES], metadata: { purpose: 'exploration', logicalCostModel: 'sum primitive node costs' } },
@@ -33,7 +33,7 @@
     { label: 'Logic & signal shaping', types: ['negate', 'min', 'max', 'threshold3', 'restore3', 'pass3', 'merge3'] },
     { label: 'Compare & routing', types: ['compare', 'select3', 'route3', 'control3'] },
     { label: 'Arithmetic', types: ['adjust3', 'normalize-carry'] },
-    { label: 'State & timing', types: ['latch3', 'register3', 'register-bank3', 'register-bank3x6', 'register-file3x6', 'program-counter6', 'instruction-register6', 'instruction-control6', 'cpu-memory-cycle6', 'cpu-control-flow6', 'cpu6', 'memory3x1', 'memory3x6', 'memory9x6', 'memory27x6', 'memory81x6', 'storage-node3', 'clock-phase3'] },
+    { label: 'State & timing', types: ['latch3', 'register3', 'register-bank3', 'register-bank3x6', 'register-file3x6', 'program-counter6', 'instruction-register6', 'instruction-control6', 'cpu-memory-cycle6', 'cpu-control-flow6', 'cpu6', 'cpu-io-adapter3x3', 'memory3x1', 'memory3x6', 'memory9x6', 'memory27x6', 'memory81x6', 'storage-node3', 'clock-phase3'] },
   ];
   const primitiveExperiment = { activeId: 'all', customTypes: new Set(EXPERIMENTAL_PRIMITIVES) };
   const PROJECT_FORMAT_VERSION = 6;
@@ -78,9 +78,15 @@
   const computerInstructionBtn = $('computerInstructionBtn');
   const computerClockBtn = $('computerClockBtn');
   const loadExampleProgramBtn = $('loadExampleProgramBtn');
+  const writeProgramBtn = $('writeProgramBtn');
   const importProgramBtn = $('importProgramBtn');
   const exportProgramBtn = $('exportProgramBtn');
   const programFile = $('programFile');
+  const programEditorDialog = $('programEditorDialog');
+  const programEditorName = $('programEditorName');
+  const programEditorDescription = $('programEditorDescription');
+  const programEditorSource = $('programEditorSource');
+  const loadWrittenProgramBtn = $('loadWrittenProgramBtn');
   const stateTimelineEl = $('stateTimeline');
   const visualizeSpeed = $('visualizeSpeed');
   const queueCount = $('queueCount');
@@ -451,17 +457,27 @@
         <div class="selection-actions"><button id="applyGeneratorBtn" type="button">Apply generator</button><button id="advanceGeneratorBtn" type="button">Advance once</button></div>
       </details>`;
     }
-    if (component.type === 'memory27x6') {
+    if (component.type === 'memory27x6' || component.type === 'memory729x6') {
       const words = Array.isArray(component.state.values) ? component.state.values : [];
+      const offset = component.type === 'memory729x6' ? 364 : 13;
+      const cpu = current.kind === 'root' ? [...rootCircuit.components.values()].find((candidate) => candidate.type === 'cpu6') : null;
+      const pcWord = Array.isArray(cpu?.state.pc) ? cpu.state.pc.map(trit) : [];
+      const pcAddress = pcWord.length === 6 && pcWord.every((value) => value === -1 || value === 0 || value === 1) ? pcWord.reduce((total, value) => total * 3 + value, 0) : null;
+      const phase = trit(cpu?.state.phase);
       const glyph = (value) => value === null || value === undefined ? '?' : value === 'Z' ? 'Z' : trit(value) < 0 ? '−' : trit(value) > 0 ? '+' : '0';
-      const rows = Array.from({ length: 27 }, (_, index) => {
+      const indices = component.type === 'memory729x6'
+        ? [...new Set([...words.map((word, index) => Array.isArray(word) && word.some((value) => value !== null && value !== undefined) ? index : null).filter((index) => index !== null), ...(pcAddress !== null ? [pcAddress + offset] : [])])].filter((index) => index >= 0 && index < 729).sort((a, b) => a - b)
+        : Array.from({ length: 27 }, (_, index) => index);
+      const rows = indices.map((index) => {
         const word = Array.isArray(words[index]) ? words[index].map(trit) : Array(6).fill(null);
         const known = word.every((value) => value === -1 || value === 0 || value === 1);
         const decoded = known ? window.TernaryCore.decodeInstruction6(word) : null;
         const mnemonic = decoded?.valid ? decoded.mnemonic : known ? 'data / reserved' : 'unwritten';
-        return `<tr><td>${index - 13}</td><td><code>${word.map(glyph).join(' ')}</code></td><td>${esc(mnemonic)}</td></tr>`;
+        const address = index - offset;
+        return `<tr${address === pcAddress ? ' class="program-current"' : ''}><td>${address === pcAddress ? '▶ ' : ''}${address}</td><td><code>${word.map(glyph).join(' ')}</code></td><td>${esc(mnemonic)}</td></tr>`;
       }).join('');
-      extra += `<details class="layout-editor" open><summary>Memory program / data list</summary><p>Rows are public Memory 27×6 locations. Mnemonics are a live decode view; a row can also be ordinary data.</p><table class="component-test-table"><thead><tr><th>Address</th><th>Tryte</th><th>Decode</th></tr></thead><tbody>${rows}</tbody></table></details>`;
+      const phaseText = phase === 0 ? 'fetch' : phase === 1 ? 'execute' : phase === -1 ? 'halted' : '?';
+      extra += `<details class="layout-editor" open><summary>Memory program / data list</summary><p><strong>PC:</strong> ${pcAddress ?? '?'} · <strong>phase:</strong> ${phaseText}. The ▶ row is the current fetch address.</p><p>Rows are public ${component.type === 'memory729x6' ? 'Memory 729×6' : 'Memory 27×6'} locations. Mnemonics are a live decode view; a row can also be ordinary data.</p><table class="component-test-table"><thead><tr><th>Address</th><th>Tryte</th><th>Decode</th></tr></thead><tbody>${rows}</tbody></table></details>`;
     }
 
     const logicalCost = def.cost?.logical || {};
@@ -2097,12 +2113,15 @@
     if ($('demoSelect').value === 'sequential-storage') return buildSequentialStorageDemo();
     if ($('demoSelect').value === 'register-bank') return buildRegisterBankDemo();
     if ($('demoSelect').value === 'word-register-bank') return buildWordRegisterBankDemo();
+    if ($('demoSelect').value === 'large-memory') return buildLargeMemoryDemo();
     if ($('demoSelect').value === 'program-counter') return buildProgramCounterDemo();
     if ($('demoSelect').value === 'cpu-datapath') {
       try { return buildCpuDatapathDemo(); }
       catch (error) { console.error(error); return setStatus(`Could not load CPU datapath: ${error.message}`, true); }
     }
     if ($('demoSelect').value === 'cpu-console') return buildCpuConsoleDemo();
+    if ($('demoSelect').value === 'cpu-console-729') return buildCpuConsoleDemo(729);
+    if ($('demoSelect').value === 'cpu-io-console') return buildCpuConsoleDemo(729, true);
     if ($('demoSelect').value === 'device-cells') return buildDeviceCellsDemo();
     if ($('demoSelect').value === 'seven-segment') return buildSevenSegmentDemo();
     if ($('demoSelect').value === 'one-trit-display') return buildOneTritDisplayDemo();
@@ -2369,6 +2388,21 @@
     setStatus('6-trit register-bank demo loaded. Action −1 reads one complete tryte, 0 idles and +1 atomically writes the addressed tryte on CLK 0 → +1.');
   }
 
+  function buildLargeMemoryDemo() {
+    const lanes = ['5', '4', '3', '2', '1', '0'];
+    const address = rootCircuit.addComponent('word-input6', -460, -180, { values: [0, 0, 0, 0, 0, 0], label: 'Six-trit RAM address' });
+    const data = rootCircuit.addComponent('word-input6', -460, 20, { values: [0, 0, 0, 0, 0, 1], label: 'RAM write tryte' });
+    const action = rootCircuit.addComponent('trit-input', -460, 190, { value: 0, label: 'Action: read / idle / write' });
+    const clock = rootCircuit.addComponent('trit-input', -460, 270, { value: 0, label: 'CLK (0 / +1)' });
+    const reset = rootCircuit.addComponent('trit-input', -460, 350, { value: 0, label: 'Reset (+1)' });
+    const memory = rootCircuit.addComponent('memory729x6', 0, 0, { label: 'Large RAM 729×6' });
+    const display = rootCircuit.addComponent('word-display6', 360, 0, { label: 'RAM read tryte' });
+    lanes.forEach((lane) => { rootCircuit.connect(address.id, `t${lane}`, memory.id, `address${lane}`); rootCircuit.connect(data.id, `t${lane}`, memory.id, `dataIn${lane}`); rootCircuit.connect(memory.id, `dataOut${lane}`, display.id, `t${lane}`); });
+    rootCircuit.connect(action.id, 'out', memory.id, 'action'); rootCircuit.connect(clock.id, 'out', memory.id, 'clock'); rootCircuit.connect(reset.id, 'out', memory.id, 'reset');
+    renderer.select(null); renderLibrary(); updateStats(); resetHistory();
+    setStatus('Large RAM 729×6 loaded. It has six balanced address trits (−364 … +364) and is a hierarchy of 243×6, 81×6, 27×6, 9×6 and 3×6 banks.');
+  }
+
   function buildProgramCounterDemo() {
     const control = rootCircuit.addComponent('trit-input', -360, -80, { value: 0, label: 'PC control: decrement / hold / increment' });
     const loadData = rootCircuit.addComponent('word-input6', -360, 20, { values: [0, 0, 0, 0, 0, 0], label: 'PC load target' });
@@ -2444,13 +2478,14 @@
     setStatus('Opening CPU datapath loaded. Reset on a clock edge, inspect two register reads and the ALU, then select external / A / ALU write-back and assert write action on the next edge.');
   }
 
-  function buildCpuConsoleDemo() {
+  function buildCpuConsoleDemo(memorySize = 27, withIo = false) {
     const lanes = ['5', '4', '3', '2', '1', '0'];
     const clock = rootCircuit.addComponent('sequence-generator', -610, -220, { sequence: [0, 1], mode: 'loop', auto: false, label: 'Computer clock (CLOCK STEP)' });
     const reset = rootCircuit.addComponent('trit-input', -610, -120, { value: 0, label: 'Memory reset (+1)' });
     const loader = rootCircuit.addComponent('cpu-program-loader6', -360, -210, { label: '18C example-program loader' });
     const cpu = rootCircuit.addComponent('cpu6', -80, -210, { label: 'Opening ternary Computer' });
-    const memory = rootCircuit.addComponent('memory27x6', 250, -210, { label: 'Program / data memory 27×6' });
+    const io = withIo ? rootCircuit.addComponent('cpu-io-adapter3x3', 180, -210, { label: 'Memory-mapped joystick / Pixel Display adapter' }) : null;
+    const memory = rootCircuit.addComponent(`memory${memorySize}x6`, 250, -210, { label: `Program / data memory ${memorySize}×6` });
     const pc = rootCircuit.addComponent('word-display6', 560, -225, { label: 'PC' });
     const rNeg = rootCircuit.addComponent('word-display6', 560, -80, { label: 'R−' });
     const rZero = rootCircuit.addComponent('word-display6', 560, 65, { label: 'R0' });
@@ -2458,14 +2493,24 @@
     const instruction = rootCircuit.addComponent('word-display6', 560, 355, { label: 'Instruction register' });
     const phase = rootCircuit.addComponent('probe', 250, 190, { label: 'CPU phase: fetch / execute / halted' });
     const halt = rootCircuit.addComponent('probe', 250, 265, { label: 'HALTED (+1)' });
+    const joystick = withIo ? rootCircuit.addComponent('input-joystick3', 300, 410, { label: 'Joystick: CPU reads −4 / −3' }) : null;
+    const display = withIo ? rootCircuit.addComponent('pixel-display3', 570, 430, { label: 'Pixel Display 3×3: CPU writes +4' }) : null;
     rootCircuit.connect(clock.id, 'out', loader.id, 'clock'); rootCircuit.connect(clock.id, 'out', cpu.id, 'clock'); rootCircuit.connect(clock.id, 'out', memory.id, 'clock'); rootCircuit.connect(reset.id, 'out', memory.id, 'reset'); rootCircuit.connect(loader.id, 'cpuReset', cpu.id, 'reset');
-    const mux = (name, loaderPort, cpuPort, memoryPort, y) => { const select = rootCircuit.addComponent('select3', 70, y, { label: `Program loader / CPU ${name}` }); rootCircuit.connect(loader.id, 'done', select.id, 'select'); rootCircuit.connect(loader.id, loaderPort, select.id, 'zero'); rootCircuit.connect(cpu.id, cpuPort, select.id, 'pos'); rootCircuit.connect(select.id, 'out', memory.id, memoryPort); };
-    ['2', '1', '0'].forEach((lane, index) => mux(`address ${lane}`, `address${lane}`, `address${lane}`, `address${lane}`, -335 + index * 55));
+    const bus = io || memory;
+    const mux = (name, loaderPort, cpuPort, busPort, y) => { const select = rootCircuit.addComponent('select3', 70, y, { label: `Program loader / CPU ${name}` }); rootCircuit.connect(loader.id, 'done', select.id, 'select'); rootCircuit.connect(loader.id, loaderPort, select.id, 'zero'); rootCircuit.connect(cpu.id, cpuPort, select.id, 'pos'); rootCircuit.connect(select.id, 'out', bus.id, busPort); };
+    const addressLanes = memorySize === 27 ? ['2', '1', '0'] : lanes;
+    addressLanes.forEach((lane, index) => mux(`address ${lane}`, `address${lane}`, `address${lane}`, `address${lane}`, -335 + index * 55));
     mux('action', 'action', 'memoryAction', 'action', -150);
-    lanes.forEach((lane, index) => { mux(`data ${lane}`, `data${lane}`, `memoryWrite${lane}`, `dataIn${lane}`, -60 + index * 55); rootCircuit.connect(memory.id, `dataOut${lane}`, cpu.id, `memoryData${lane}`); rootCircuit.connect(cpu.id, `pc${lane}`, pc.id, `t${lane}`); rootCircuit.connect(cpu.id, `rNeg${lane}`, rNeg.id, `t${lane}`); rootCircuit.connect(cpu.id, `rZero${lane}`, rZero.id, `t${lane}`); rootCircuit.connect(cpu.id, `rPos${lane}`, rPos.id, `t${lane}`); rootCircuit.connect(cpu.id, `instruction${lane}`, instruction.id, `t${lane}`); });
+    lanes.forEach((lane, index) => { mux(`data ${lane}`, `data${lane}`, `memoryWrite${lane}`, `dataIn${lane}`, -60 + index * 55); rootCircuit.connect((io || memory).id, `dataOut${lane}`, cpu.id, `memoryData${lane}`); rootCircuit.connect(cpu.id, `pc${lane}`, pc.id, `t${lane}`); rootCircuit.connect(cpu.id, `rNeg${lane}`, rNeg.id, `t${lane}`); rootCircuit.connect(cpu.id, `rZero${lane}`, rZero.id, `t${lane}`); rootCircuit.connect(cpu.id, `rPos${lane}`, rPos.id, `t${lane}`); rootCircuit.connect(cpu.id, `instruction${lane}`, instruction.id, `t${lane}`); });
+    if (io) {
+      lanes.forEach((lane) => { rootCircuit.connect(io.id, `ramAddress${lane}`, memory.id, `address${lane}`); rootCircuit.connect(io.id, `ramDataIn${lane}`, memory.id, `dataIn${lane}`); rootCircuit.connect(memory.id, `dataOut${lane}`, io.id, `ramData${lane}`); });
+      rootCircuit.connect(io.id, 'ramAction', memory.id, 'action'); rootCircuit.connect(clock.id, 'out', io.id, 'clock'); rootCircuit.connect(reset.id, 'out', io.id, 'reset'); rootCircuit.connect(loader.id, 'done', io.id, 'ioEnable');
+      rootCircuit.connect(joystick.id, 'x', io.id, 'joystickX'); rootCircuit.connect(joystick.id, 'y', io.id, 'joystickY');
+      rootCircuit.connect(io.id, 'displayX', display.id, 'x'); rootCircuit.connect(io.id, 'displayY', display.id, 'y'); rootCircuit.connect(io.id, 'displayColor', display.id, 'color'); rootCircuit.connect(io.id, 'displayClearBeforeWrite', display.id, 'clearBeforeWrite'); rootCircuit.connect(io.id, 'displayClock', display.id, 'clock'); rootCircuit.connect(io.id, 'displayReset', display.id, 'reset');
+    }
     rootCircuit.connect(cpu.id, 'phase', phase.id, 'in'); rootCircuit.connect(cpu.id, 'halted', halt.id, 'in');
     renderer.select(null); renderLibrary(); updateStats(); resetHistory();
-    setStatus('Runnable CPU console loaded. The example loader writes six program words through Memory 27×6, then releases the CPU automatically. Run computer now executes LIT, ADD, STORE, LOAD and HALT; select Memory 27×6 to inspect its program list.');
+    setStatus(withIo ? 'Interactive CPU I/O console loaded. Program code remains in RAM; after loading, LOAD [R−] at −4 / −3 reads joystick X / Y and STORE [R+] at +4 writes packed x/y/color to Pixel Display 3×3.' : 'Runnable CPU console loaded. The example loader writes six program words through Memory 27×6, then releases the CPU automatically. Run computer now executes LIT, ADD, STORE, LOAD and HALT; select Memory 27×6 to inspect its program list.');
   }
 
   function buildStructuralCpuArchitecture(loadDemo = false) {
@@ -3986,17 +4031,99 @@
     const cpu = [...rootCircuit.components.values()].find((component) => component.type === 'cpu6');
     const clock = [...rootCircuit.components.values()].find((component) => component.type === 'sequence-generator' && String(component.state?.label || '').startsWith('Computer clock'));
     const loader = [...rootCircuit.components.values()].find((component) => component.type === 'cpu-program-loader6');
-    return cpu && clock && loader ? { cpu, clock, loader } : null;
+    const memory = [...rootCircuit.components.values()].find((component) => component.type === 'memory27x6' || component.type === 'memory729x6');
+    const io = [...rootCircuit.components.values()].find((component) => component.type === 'cpu-io-adapter3x3');
+    return cpu && clock && loader ? { cpu, clock, loader, memory, io } : null;
   }
 
   const PROGRAM_FORMAT = 'ternary-program';
   const exampleProgram = () => ({ format: PROGRAM_FORMAT, version: 1, name: '18C arithmetic and memory', description: 'LIT −4 and +1, ADD, STORE, LOAD, then HALT.', words: [
     { address: 0, word: [1, -1, -1, -1, -1, -1], label: 'LIT R−, −, −' }, { address: 1, word: [1, -1, -1, 0, 0, 1], label: 'LIT R0, 0, +' }, { address: 2, word: [-1, -1, 1, 1, 0, 0], label: 'ADD R+, R0, R0' }, { address: 3, word: [-1, 0, 1, 0, -1, 1], label: 'STORE [R−], R+' }, { address: 4, word: [-1, 0, 0, 0, -1, 0], label: 'LOAD R0, [R−]' }, { address: 5, word: [-1, -1, -1, 0, 0, 0], label: 'HALT' },
   ] });
+  const ioExampleProgram = () => ({ format: PROGRAM_FORMAT, version: 1, name: 'Joystick to Pixel Display', description: 'Reads memory-mapped joystick X/Y, packs x/y/+ colour, writes Pixel Display 3×3, and repeats.', words: [
+    { address: 0, word: [...CPU_OPCODES.LIT, -1, -1, -1], label: 'LIT R−, −, −  ; joystick X at −4' },
+    { address: 1, word: [...CPU_OPCODES.LOAD, 0, -1, 0], label: 'LOAD R0, [R−]' },
+    { address: 2, word: [...CPU_OPCODES.LIT, -1, -1, 0], label: 'LIT R−, −, 0  ; joystick Y at −3' },
+    { address: 3, word: [...CPU_OPCODES.LOAD, 1, -1, 0], label: 'LOAD R+, [R−]' },
+    { address: 4, word: [...CPU_OPCODES.ADD, 0, 0, 1], label: 'ADD R0, R0, R+' },
+    { address: 5, word: [...CPU_OPCODES.LIT, 1, 0, 1], label: 'LIT R+, 0, +  ; colour +1' },
+    { address: 6, word: [...CPU_OPCODES.ADD, 0, 0, 1], label: 'ADD R0, R0, R+' },
+    { address: 7, word: [...CPU_OPCODES.LIT, 1, 1, 1], label: 'LIT R+, +, +  ; display port +4' },
+    { address: 8, word: [...CPU_OPCODES.STORE, 0, 1, 0], label: 'STORE [R+], R0' },
+    { address: 9, word: [...CPU_OPCODES.LIT, 1, 0, 0], label: 'LIT R+, 0, 0' },
+    { address: 10, word: [...CPU_OPCODES.JUMP, 0, 1, 0], label: 'JUMP R+' },
+  ] });
+  const exampleProgramSource = `# A six-instruction arithmetic and memory program
+LIT R-, -, -
+LIT R0, 0, +
+ADD R+, R0, R0
+STORE [R-], R+
+LOAD R0, [R-]
+HALT`;
+  function sourceTrit(token, lineNumber) {
+    const value = String(token || '').trim().replaceAll('−', '-');
+    if (value === '-' || value === '-1') return -1;
+    if (value === '0') return 0;
+    if (value === '+' || value === '+1' || value === '1') return 1;
+    throw new Error(`Line ${lineNumber}: expected a ternary digit (−, 0 or +), got “${token}”.`);
+  }
+  function sourceRegister(token, lineNumber) {
+    const value = String(token || '').trim().toUpperCase().replaceAll('−', '-');
+    if (value === 'R-' || value === 'R−') return -1;
+    if (value === 'R0') return 0;
+    if (value === 'R+' || value === 'R＋') return 1;
+    throw new Error(`Line ${lineNumber}: expected R−, R0 or R+, got “${token}”.`);
+  }
+  function parseProgramSource(source, name, description) {
+    let address = 0;
+    const words = [];
+    String(source || '').split(/\r?\n/).forEach((rawLine, index) => {
+      const lineNumber = index + 1;
+      let line = rawLine.replace(/[;#].*$/, '').trim();
+      if (!line) return;
+      const addressMatch = line.match(/^([+-]?\d+)\s*:\s*(.*)$/);
+      if (addressMatch) { address = Number(addressMatch[1]); line = addressMatch[2].trim(); }
+      const orgMatch = line.match(/^\.ORG\s+([+-]?\d+)$/i);
+      if (orgMatch) { address = Number(orgMatch[1]); return; }
+      if (!Number.isInteger(address) || address < -364 || address > 364) throw new Error(`Line ${lineNumber}: address must be between −364 and +364.`);
+      const tokens = line.replace(/[\[\],]/g, ' ').trim().split(/\s+/);
+      const mnemonic = tokens.shift().toUpperCase();
+      const requireArgs = (count) => { if (tokens.length !== count) throw new Error(`Line ${lineNumber}: ${mnemonic} needs ${count} operand${count === 1 ? '' : 's'}.`); };
+      let word;
+      if (mnemonic === '.WORD') { requireArgs(6); word = tokens.map((token) => sourceTrit(token, lineNumber)); }
+      else if (mnemonic === 'HALT' || mnemonic === 'NOP') { requireArgs(0); word = [...CPU_OPCODES[mnemonic], 0, 0, 0]; }
+      else if (mnemonic === 'MOV') { requireArgs(2); word = [...CPU_OPCODES.MOV, sourceRegister(tokens[0], lineNumber), sourceRegister(tokens[1], lineNumber), 0]; }
+      else if (mnemonic === 'ADD' || mnemonic === 'SUB') { requireArgs(3); word = [...CPU_OPCODES[mnemonic], sourceRegister(tokens[0], lineNumber), sourceRegister(tokens[1], lineNumber), sourceRegister(tokens[2], lineNumber)]; }
+      else if (mnemonic === 'LOAD') { requireArgs(2); word = [...CPU_OPCODES.LOAD, sourceRegister(tokens[0], lineNumber), sourceRegister(tokens[1], lineNumber), 0]; }
+      else if (mnemonic === 'STORE') { requireArgs(2); word = [...CPU_OPCODES.STORE, 0, sourceRegister(tokens[0], lineNumber), sourceRegister(tokens[1], lineNumber)]; }
+      else if (mnemonic === 'JUMP') { requireArgs(1); word = [...CPU_OPCODES.JUMP, 0, sourceRegister(tokens[0], lineNumber), 0]; }
+      else if (mnemonic === 'BRZ') { requireArgs(2); word = [...CPU_OPCODES.BRZ, 0, sourceRegister(tokens[0], lineNumber), sourceRegister(tokens[1], lineNumber)]; }
+      else if (mnemonic === 'LIT') { requireArgs(3); word = [...CPU_OPCODES.LIT, sourceRegister(tokens[0], lineNumber), sourceTrit(tokens[1], lineNumber), sourceTrit(tokens[2], lineNumber)]; }
+      else throw new Error(`Line ${lineNumber}: unknown instruction “${mnemonic}”.`);
+      words.push({ address, word, label: rawLine.trim() });
+      address += 1;
+    });
+    return normalizeProgram({ format: PROGRAM_FORMAT, version: 1, name, description, words });
+  }
+  function openProgramEditor() {
+    if (!computerConsoleContext()) return setStatus('Open Runnable CPU console before writing a program.', true);
+    programEditorName.value = 'My ternary program';
+    programEditorDescription.value = '';
+    programEditorSource.value = exampleProgramSource;
+    programEditorDialog.showModal();
+    programEditorSource.focus();
+  }
+  function loadWrittenProgram(event) {
+    event.preventDefault();
+    try {
+      loadProgram(parseProgramSource(programEditorSource.value, programEditorName.value, programEditorDescription.value));
+      programEditorDialog.close();
+    } catch (error) { setStatus(`Program validation failed: ${error.message}`, true); }
+  }
   function normalizeProgram(data) {
     if (!data || data.format !== PROGRAM_FORMAT || Number(data.version) !== 1 || !Array.isArray(data.words)) throw new Error('Unsupported program file.');
-    const words = data.words.map((entry) => ({ address: Number(entry.address), word: Array.isArray(entry.word) ? entry.word.map(trit) : [], label: String(entry.label || '') })).filter((entry) => Number.isInteger(entry.address) && entry.address >= -13 && entry.address <= 13 && entry.word.length === 6 && entry.word.every((value) => value === -1 || value === 0 || value === 1));
-    if (!words.length || new Set(words.map((entry) => entry.address)).size !== words.length) throw new Error('A program needs unique valid Memory 27×6 addresses and six known trits per word.');
+    const words = data.words.map((entry) => ({ address: Number(entry.address), word: Array.isArray(entry.word) ? entry.word.map(trit) : [], label: String(entry.label || '') })).filter((entry) => Number.isInteger(entry.address) && entry.address >= -364 && entry.address <= 364 && entry.word.length === 6 && entry.word.every((value) => value === -1 || value === 0 || value === 1));
+    if (!words.length || new Set(words.map((entry) => entry.address)).size !== words.length) throw new Error('A program needs unique addresses from −364 through +364 and six known trits per word.');
     return { format: PROGRAM_FORMAT, version: 1, name: String(data.name || 'Untitled program'), description: String(data.description || ''), words: words.sort((a, b) => a.address - b.address) };
   }
   function loadProgram(data) {
@@ -4005,7 +4132,8 @@
     const program = normalizeProgram(data);
     stopComputerRun(); rootCircuit.setState(context.loader.id, { program: program.words, programName: program.name, index: 0, active: true }); rootCircuit.simulate();
     for (let step = 0; step < program.words.length * 2; step += 1) computerClockStep({ announce: false });
-    setStatus(`Loaded “${program.name}” through Memory 27×6. CPU is reset at PC 0 and has not executed; inspect the memory list, then Run computer or Instruction step.`);
+    const memoryLabel = context.memory?.state?.label || 'program / data memory';
+    setStatus(`Loaded “${program.name}” through ${memoryLabel}. CPU is reset at PC 0 and has not executed; inspect the memory list, then Run computer or Instruction step.`);
   }
   async function importProgram() {
     const file = programFile.files?.[0]; if (!file) return;
@@ -4094,8 +4222,17 @@
     on('state-staged', ({ componentId, patch }) => addStateTimeline('stage', componentId, Object.entries(patch).map(([key, value]) => `${key}=${Array.isArray(value) ? `[${value.map(fmtTimelineValue).join(', ')}]` : fmtTimelineValue(value)}`).join(' · ')));
     on('state-committed', ({ changes }) => {
       changes.forEach((change) => addStateTimeline('commit', change.componentId, `value ${fmtTimelineValue(change.before.value)} → ${fmtTimelineValue(change.after.value)}`));
-      const selectedMemory = changes.find((change) => circuit().components.get(change.componentId)?.type === 'memory27x6' && renderer.selection?.kind === 'component' && renderer.selection.id === change.componentId);
-      if (selectedMemory) updateInspector({ kind: 'component', id: selectedMemory.componentId, item: circuit().components.get(selectedMemory.componentId) });
+      const cpuChange = changes.find((change) => circuit().components.get(change.componentId)?.type === 'cpu6');
+      if (cpuChange) {
+        const phase = trit(cpuChange.after.phase), pc = Array.isArray(cpuChange.after.pc) && cpuChange.after.pc.every((value) => value === -1 || value === 0 || value === 1) ? cpuChange.after.pc.reduce((total, value) => total * 3 + value, 0) : '?';
+        addStateTimeline('cpu', cpuChange.componentId, `PC ${pc} · ${phase === 0 ? 'fetch' : phase === 1 ? 'execute' : phase === -1 ? 'halted' : '?'}`);
+      }
+    const selectedComponentType = renderer.selection?.kind === 'component'
+      ? circuit().components.get(renderer.selection.id)?.type
+      : null;
+    const selectedMemory = ['memory27x6', 'memory729x6'].includes(selectedComponentType)
+      && (changes.some((change) => change.componentId === renderer.selection.id) || cpuChange);
+      if (selectedMemory) updateInspector({ kind: 'component', id: renderer.selection.id, item: circuit().components.get(renderer.selection.id) });
     });
     on('clock-step', ({ clocks }) => { stateTimeline.push({ kind: 'clock', label: 'Clock step', detail: `${clocks.length} source${clocks.length === 1 ? '' : 's'} advanced` }); renderStateTimeline(); });
     updateStats();
@@ -4162,7 +4299,9 @@
     computerRunBtn.addEventListener('click', toggleComputerRun);
     computerInstructionBtn.addEventListener('click', computerInstructionStep);
     computerClockBtn.addEventListener('click', () => computerClockStep());
-    loadExampleProgramBtn.addEventListener('click', () => loadProgram(exampleProgram()));
+    loadExampleProgramBtn.addEventListener('click', () => loadProgram(computerConsoleContext()?.io ? ioExampleProgram() : exampleProgram()));
+    writeProgramBtn.addEventListener('click', openProgramEditor);
+    loadWrittenProgramBtn.addEventListener('click', loadWrittenProgram);
     importProgramBtn.addEventListener('click', () => programFile.click());
     exportProgramBtn.addEventListener('click', exportProgram);
     programFile.addEventListener('change', importProgram);

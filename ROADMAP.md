@@ -356,9 +356,9 @@ Memory is completed before CPU integration. It must be a reusable, inspectable s
 - [x] Load a selected program through the public memory interface while keeping CPU reset/stopped
 - [x] Inspect the loaded program as address, six-trit word, decoded instruction and data rows before execution
 - [x] Export and import standalone program files so programs can be shared without exporting an entire project
-- [ ] Load a small ternary program
-- [ ] Instruction step
-- [ ] Clock step
+- [x] Load a small ternary program
+- [x] Instruction step
+- [x] Clock step
 - [ ] Propagation step
 - [ ] Highlight active components
 - [ ] Follow a trit through the CPU
@@ -388,7 +388,7 @@ Each example is an executable acceptance test for the machine, not a separate sh
 
 ### Phase 20D — Bouncing-ball display program
 
-- [ ] Add a documented memory-mapped adapter for the existing `Pixel Display 3×3`
+- [x] Add a documented memory-mapped adapter for the existing `Pixel Display 3×3`
 - [ ] Write a program that clears the old pixel, updates position and reverses direction at each edge
 - [ ] Demonstrate the ball moving and bouncing using only CPU instructions, memory and the public display port
 
@@ -403,6 +403,16 @@ Each example is an executable acceptance test for the machine, not a separate sh
 - [ ] Write a program that moves a display ball from joystick input while respecting the display bounds
 - [ ] Keep display writes and input reads on the same public CPU memory-port contract
 - [ ] Optionally add a pointer/mouse-to-ternary-coordinate adapter after joystick control is proven
+
+## Phase 21 — Program cartridges
+
+Cartridges are external program/game packages. They write ordinary transactions through the public RAM port; they never bypass RAM or add hidden CPU state.
+
+- [ ] Define a versioned cartridge format: program/data words, `entryPoint`, required ISA/RAM profile, title, author and description
+- [ ] Build a cartridge loader that holds CPU reset, writes the package through the public RAM interface, sets PC to `entryPoint`, then waits for explicit Run
+- [ ] Import/export standalone cartridge files and validate compatibility before loading
+- [ ] Show inserted-cartridge metadata, load progress, entry point and memory map in the console
+- [ ] Support cartridge examples built from the existing CPU, display and input interfaces, including small games
 
 ## v9 additions
 

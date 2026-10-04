@@ -154,6 +154,18 @@ The opening register map fits the first six-trit CPU address range:
 
 Thus one RGB pixel takes three ordinary CPU writes to address `0`: R word, then G word, then B word. The adapter produces six internal serial display clocks for each CPU data write, and its third write completes the display's 18-trit pixel packet. A full 24×24 frame is 1,728 six-trit CPU writes. The adapter owns this serialization state and exposes only status through the normal memory read action; it must never let an invalid address, action, data or clock partially alter the serial packet or display frame. Its read timing now follows the memory contract below; its wait/ready policy and structural-vs-accelerated implementation remain deferred until the adapter itself is built.
 
+### Opening CPU joystick / Pixel Display 3×3 map
+
+The interactive CPU I/O console places a transparent adapter between the CPU bus and RAM. It preserves the ordinary six-trit address, data, action, clock and reset contract: transactions not listed below pass to RAM unchanged. While a program is loading, I/O decoding is explicitly disabled, so code may safely occupy every RAM address. After loading, the map is active.
+
+| Address | `action=−1` read | `action=+1` write |
+| --- | --- | --- |
+| `−4` | Joystick X as `0 0 0 x 0 0` | Reserved; no RAM write occurs. |
+| `−3` | Joystick Y as `0 0 0 0 y 0` | Reserved; no RAM write occurs. |
+| `+4` | Reserved; no RAM read result is claimed. | Pixel command: word lanes `t2, t1, t0` are `x, y, color` for `Pixel Display 3×3`; the write commits on the same CPU rising edge and clears the prior frame, leaving one bounded ball. |
+
+The two joystick read words add without carry for the supported `−1 / 0 / +1` coordinates. A program can therefore form the packed display word by loading X and Y, adding them, then adding a `+1` color literal. The adapter has no hidden CPU or RAM state; the only state it reaches is the public frame state of the clocked pixel peripheral.
+
 ## Memory port contract
 
 The opening memory interface is shared by `Memory 3×1`, word memory and future memory-mapped adapters. It has one balanced `address` trit (or an ordered balanced address word in larger memories), `dataIn`, `dataOut`, ternary `action`, `clock` and `reset`. The action trit remains packed through the CPU-facing port: `−1 = read`, `0 = idle`, `+1 = write`. There are no separate binary read-enable and write-enable wires.

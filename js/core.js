@@ -882,6 +882,31 @@
   registry.register({ type: 'cpu-address27', label: 'CPU fetch / data address select', category: 'control', inputs: ['pc2', 'pc1', 'pc0', 'ra2', 'ra1', 'ra0', 'phase'], outputs: ['address2', 'address1', 'address0'], evaluate(c) { const phase = trit(c.inputs.phase); const prefix = phase === 1 ? 'ra' : phase === 0 || phase === -1 ? 'pc' : null; return Object.fromEntries(['2', '1', '0'].map((lane) => [`address${lane}`, prefix ? trit(c.inputs[`${prefix}${lane}`]) : UNKNOWN])); } });
   registry.register({ type: 'cpu-memory-port27', label: 'CPU / Memory 27×6 port', category: 'control', inputs: ['pc2', 'pc1', 'pc0', 'ra2', 'ra1', 'ra0', 'phase', 'executeAction', ...wordLanes.map((lane) => `dataIn${lane}`)], outputs: ['address2', 'address1', 'address0', 'action', ...wordLanes.map((lane) => `dataOut${lane}`)], evaluate(c) { const phase = trit(c.inputs.phase), prefix = phase === 1 ? 'ra' : phase === 0 || phase === -1 ? 'pc' : null; const action = phase === 0 ? -1 : phase === 1 ? trit(c.inputs.executeAction) : 0; const data = Object.fromEntries(wordLanes.map((lane) => [`dataOut${lane}`, trit(c.inputs[`dataIn${lane}`])])); return { ...Object.fromEntries(['2', '1', '0'].map((lane) => [`address${lane}`, prefix ? trit(c.inputs[`${prefix}${lane}`]) : UNKNOWN])), action, ...data }; } });
   registry.register({
+    type: 'cpu-io-adapter3x3', label: 'CPU I/O adapter — joystick + Pixel Display 3×3', category: 'computer', breaksCombinationalPath: true,
+    inputs: [...wordLanes.map((lane) => `address${lane}`), 'action', ...wordLanes.map((lane) => `dataIn${lane}`), ...wordLanes.map((lane) => `ramData${lane}`), 'clock', 'reset', 'ioEnable', 'joystickX', 'joystickY'],
+    outputs: [...wordLanes.map((lane) => `ramAddress${lane}`), 'ramAction', ...wordLanes.map((lane) => `ramDataIn${lane}`), ...wordLanes.map((lane) => `dataOut${lane}`), 'displayX', 'displayY', 'displayColor', 'displayClearBeforeWrite', 'displayClock', 'displayReset'],
+    evaluate(c) {
+      const address = balancedWordValue(wordLanes.map((lane) => trit(c.inputs[`address${lane}`])));
+      const action = trit(c.inputs.action), enabled = trit(c.inputs.ioEnable) === 1;
+      const isIo = enabled && (address === -4 || address === -3 || address === 4);
+      const read = isIo && action === -1;
+      const writeDisplay = isIo && address === 4 && action === 1;
+      const joystickX = trit(c.inputs.joystickX), joystickY = trit(c.inputs.joystickY);
+      const ioData = address === -4 ? [0, 0, 0, joystickX, 0, 0] : address === -3 ? [0, 0, 0, 0, joystickY, 0] : Array(6).fill(UNKNOWN);
+      const data = read ? ioData : wordLanes.map((lane) => trit(c.inputs[`ramData${lane}`]));
+      const writeWord = wordLanes.map((lane) => trit(c.inputs[`dataIn${lane}`]));
+      return {
+        ...Object.fromEntries(wordLanes.map((lane) => [`ramAddress${lane}`, trit(c.inputs[`address${lane}`])])),
+        ramAction: isIo ? 0 : action,
+        ...Object.fromEntries(wordLanes.map((lane, index) => [`ramDataIn${lane}`, writeWord[index]])),
+        ...Object.fromEntries(wordLanes.map((lane, index) => [`dataOut${lane}`, data[index]])),
+        displayX: writeWord[3], displayY: writeWord[4], displayColor: writeWord[5], displayClearBeforeWrite: writeDisplay ? 1 : 0,
+        displayClock: writeDisplay ? trit(c.inputs.clock) : 0,
+        displayReset: trit(c.inputs.reset),
+      };
+    },
+  });
+  registry.register({
     type: 'cpu-memory-cycle6', label: 'CPU memory-cycle timing', category: 'control',
     inputs: ['phase', 'executeAction', 'executeRegisterWrite'], outputs: ['action', 'instructionLoad', 'readSample', 'loadWrite', 'storeWrite'],
     evaluate(c) {
@@ -926,7 +951,7 @@
   registry.register({
     type: 'cpu6', label: 'Opening ternary CPU — 6-trit', category: 'computer', breaksCombinationalPath: true,
     inputs: [...wordLanes.map((lane) => `memoryData${lane}`), 'clock', 'reset'],
-    outputs: ['address2', 'address1', 'address0', 'memoryAction', ...wordLanes.map((lane) => `memoryWrite${lane}`), ...wordLanes.map((lane) => `pc${lane}`), ...wordLanes.flatMap((lane) => [`rNeg${lane}`, `rZero${lane}`, `rPos${lane}`]), ...wordLanes.map((lane) => `instruction${lane}`), 'phase', 'halted'],
+    outputs: [...wordLanes.map((lane) => `address${lane}`), 'memoryAction', ...wordLanes.map((lane) => `memoryWrite${lane}`), ...wordLanes.map((lane) => `pc${lane}`), ...wordLanes.flatMap((lane) => [`rNeg${lane}`, `rZero${lane}`, `rPos${lane}`]), ...wordLanes.map((lane) => `instruction${lane}`), 'phase', 'halted'],
     defaultState: { pc: Array(6).fill(UNKNOWN), registers: Array.from({ length: 3 }, () => Array(6).fill(UNKNOWN)), instruction: Array(6).fill(UNKNOWN), phase: 0, previousClock: 0 },
     evaluate(c, { circuit }) {
       const state = circuit.getStagedState(c.id);
@@ -939,7 +964,7 @@
       const read = (address) => isKnownTrit(address) ? (registers[index(address)] || Array(6).fill(UNKNOWN)) : Array(6).fill(UNKNOWN);
       const ra = read(decoded.ra), rb = read(decoded.rb);
       const memoryAction = phase === 0 ? -1 : phase === 1 ? trit(decoded.memoryAction) : 0;
-      const addressWord = phase === 0 ? pc.slice(-3) : phase === 1 ? ra.slice(-3) : Array(3).fill(UNKNOWN);
+      const addressWord = phase === 0 ? pc : phase === 1 ? ra : Array(6).fill(UNKNOWN);
       const memoryData = wordLanes.map((lane) => trit(c.inputs[`memoryData${lane}`]));
       const clock = trit(c.inputs.clock), reset = trit(c.inputs.reset);
       const increment = (word) => {
@@ -972,7 +997,7 @@
           if (decoded.halt === 1) patch.phase = -1;
           else {
             const zero = ra.every((value) => value === 0);
-            const target = decoded.mnemonic === 'JUMP' ? signExtendAddress3(ra.slice(-3)) : decoded.mnemonic === 'BRZ' && zero ? signExtendAddress3(rb.slice(-3)) : null;
+            const target = decoded.mnemonic === 'JUMP' ? ra : decoded.mnemonic === 'BRZ' && zero ? rb : null;
             const nextPc = target || increment(pc);
             if (nextPc?.every(isKnownTrit)) patch.pc = nextPc;
             patch.phase = 0;
@@ -981,20 +1006,20 @@
         circuit.stageStateCommit(c.id, patch);
       }
       const registerOutputs = { ...Object.fromEntries(wordLanes.map((lane, laneIndex) => [`rNeg${lane}`, trit(registers[0][laneIndex])])), ...Object.fromEntries(wordLanes.map((lane, laneIndex) => [`rZero${lane}`, trit(registers[1][laneIndex])])), ...Object.fromEntries(wordLanes.map((lane, laneIndex) => [`rPos${lane}`, trit(registers[2][laneIndex])])) };
-      return { address2: addressWord[0], address1: addressWord[1], address0: addressWord[2], memoryAction, ...Object.fromEntries(wordLanes.map((lane, laneIndex) => [`memoryWrite${lane}`, trit(rb[laneIndex])])), ...Object.fromEntries(wordLanes.map((lane, laneIndex) => [`pc${lane}`, pc[laneIndex]])), ...registerOutputs, ...Object.fromEntries(wordLanes.map((lane, laneIndex) => [`instruction${lane}`, instruction[laneIndex]])), phase, halted: phase === -1 ? 1 : 0 };
+      return { ...Object.fromEntries(wordLanes.map((lane, laneIndex) => [`address${lane}`, addressWord[laneIndex]])), memoryAction, ...Object.fromEntries(wordLanes.map((lane, laneIndex) => [`memoryWrite${lane}`, trit(rb[laneIndex])])), ...Object.fromEntries(wordLanes.map((lane, laneIndex) => [`pc${lane}`, pc[laneIndex]])), ...registerOutputs, ...Object.fromEntries(wordLanes.map((lane, laneIndex) => [`instruction${lane}`, instruction[laneIndex]])), phase, halted: phase === -1 ? 1 : 0 };
     },
   });
   registry.register({
     type: 'cpu-program-loader6', label: 'CPU example-program loader', category: 'computer', breaksCombinationalPath: true,
-    inputs: ['clock'], outputs: ['address2', 'address1', 'address0', 'action', ...wordLanes.map((lane) => `data${lane}`), 'done', 'cpuReset'],
+    inputs: ['clock'], outputs: [...wordLanes.map((lane) => `address${lane}`), 'action', ...wordLanes.map((lane) => `data${lane}`), 'done', 'cpuReset'],
     defaultState: { index: 0, previousClock: 0, active: false, program: [{ address: 0, word: [...CPU_OPCODES.LIT, -1, -1, -1] }, { address: 1, word: [...CPU_OPCODES.LIT, 0, 0, 1] }, { address: 2, word: [...CPU_OPCODES.ADD, 1, 0, 0] }, { address: 3, word: [...CPU_OPCODES.STORE, 0, -1, 1] }, { address: 4, word: [...CPU_OPCODES.LOAD, 0, -1, 0] }, { address: 5, word: [...CPU_OPCODES.HALT, 0, 0, 0] }] },
     evaluate(c, { circuit }) {
-      const program = (Array.isArray(c.state.program) ? c.state.program : []).filter((entry) => Number.isInteger(Number(entry?.address)) && Number(entry.address) >= -13 && Number(entry.address) <= 13 && Array.isArray(entry.word) && entry.word.length === 6 && entry.word.every(isKnownTrit));
+      const program = (Array.isArray(c.state.program) ? c.state.program : []).filter((entry) => Number.isInteger(Number(entry?.address)) && Number(entry.address) >= -364 && Number(entry.address) <= 364 && Array.isArray(entry.word) && entry.word.length === 6 && entry.word.every(isKnownTrit));
       const index = Math.max(0, Number(c.state.index) || 0), active = c.state.active === true && index < program.length;
       const clock = trit(c.inputs.clock), staged = circuit.getStagedState(c.id);
       if (isKnownTrit(clock)) { const rising = trit(staged.previousClock) === 0 && clock === 1; const patch = { previousClock: clock }; if (rising && active) { patch.index = index + 1; if (index + 1 >= program.length) patch.active = false; } circuit.stageStateCommit(c.id, patch); }
-      const entry = active ? program[index] : null, address = entry ? balancedWordDigits(Number(entry.address), 3) : Array(3).fill(UNKNOWN), data = entry ? entry.word.map(trit) : Array(6).fill(UNKNOWN);
-      return { address2: address[0], address1: address[1], address0: address[2], action: active ? 1 : 0, ...Object.fromEntries(wordLanes.map((lane, laneIndex) => [`data${lane}`, data[laneIndex]])), done: active ? 0 : 1, cpuReset: active ? 1 : 0 };
+      const entry = active ? program[index] : null, address = entry ? balancedWordDigits(Number(entry.address), 6) : Array(6).fill(UNKNOWN), data = entry ? entry.word.map(trit) : Array(6).fill(UNKNOWN);
+      return { ...Object.fromEntries(wordLanes.map((lane, laneIndex) => [`address${lane}`, address[laneIndex]])), action: active ? 1 : 0, ...Object.fromEntries(wordLanes.map((lane, laneIndex) => [`data${lane}`, data[laneIndex]])), done: active ? 0 : 1, cpuReset: active ? 1 : 0 };
     },
   });
   registry.register({
@@ -1064,6 +1089,8 @@
   registerScaledWordMemory('memory9x6', 'Memory 9×6', 9, 2, 'structural-memory9x6-v1');
   registerScaledWordMemory('memory27x6', 'Memory 27×6', 27, 3, 'structural-memory27x6-v1');
   registerScaledWordMemory('memory81x6', 'Memory 81×6', 81, 4, 'structural-memory81x6-v1');
+  registerScaledWordMemory('memory243x6', 'Memory 243×6', 243, 5, 'structural-memory243x6-v1');
+  registerScaledWordMemory('memory729x6', 'Memory 729×6', 729, 6, 'structural-memory729x6-v1');
 
   const experimentalCost = () => ({ logical: { nodes: 1, depth: 1 } });
 
@@ -1104,7 +1131,7 @@
   registry.register({ type: 'word-display6', label: '6-trit word display', category: 'output', inputs: ['t5', 't4', 't3', 't2', 't1', 't0'], outputs: [], defaultState: { values: [UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN] }, cost: { logical: { nodes: 0, depth: 0 } }, evaluate(c) { c.state.values = ['t5', 't4', 't3', 't2', 't1', 't0'].map((name) => trit(c.inputs[name])); return {}; } });
   registry.register({
     type: 'pixel-display3', label: 'Pixel Display 3×3', category: 'output', breaksCombinationalPath: true,
-    inputs: ['x', 'y', 'color', 'clock', 'reset'], outputs: [],
+    inputs: ['x', 'y', 'color', 'clearBeforeWrite', 'clock', 'reset'], outputs: [],
     defaultState: { pixels: Array(9).fill(0), previousClock: 0, invalidIo: null },
     cost: { logical: { nodes: 0, depth: 0 } },
     evaluate(c, { circuit }) {
@@ -1133,7 +1160,7 @@
           const display = (value) => value === 'Z' ? 'Z' : value === null ? '?' : value === -1 ? '−1' : String(value);
           patch.invalidIo = `invalid pixel ports: x=${display(x)} y=${display(y)} color=${display(color)}`;
         } else {
-          const pixels = (Array.isArray(staged.pixels) ? staged.pixels : Array(9).fill(0)).slice(0, 9).map(trit);
+          const pixels = trit(c.inputs.clearBeforeWrite) === 1 ? Array(9).fill(0) : (Array.isArray(staged.pixels) ? staged.pixels : Array(9).fill(0)).slice(0, 9).map(trit);
           const column = x + 1, row = 1 - y;
           pixels[row * 3 + column] = color;
           patch.pixels = pixels; patch.invalidIo = null;
@@ -1254,6 +1281,7 @@
     'word-zero6': { mode: 'accelerated-equivalent', status: 'architectural control contract', summary: 'A declared word boundary reports +1 only for a fully known all-zero tryte.', layers: ['Six known ternary lanes', 'All-zero decision'] },
     'cpu-address27': { mode: 'accelerated-equivalent', status: 'architectural control contract', summary: 'A declared address selector presents PC low trits during fetch and register-A low trits during execute.', layers: ['Fetch PC address', 'Execute register address', 'Three-trit Memory 27×6 address'] },
     'cpu-memory-port27': { mode: 'accelerated-equivalent', status: 'architectural control contract', summary: 'A declared CPU-facing port multiplexes fetch reads and execute data accesses onto the public Memory 27×6 address/action/data contract.', layers: ['Fetch action −1', 'Execute read/idle/write action', 'Unmodified six-trit write data'] },
+    'cpu-io-adapter3x3': { mode: 'external-adapter', status: 'memory-mapped I/O boundary', summary: 'Routes ordinary CPU memory transactions either to RAM or to documented joystick/display registers. It does not add CPU state or bypass the public memory action/address/data contract.', layers: ['−4 joystick X read', '−3 joystick Y read', '+4 packed Pixel Display 3×3 write', 'RAM pass-through for every other transaction'] },
     'cpu-memory-cycle6': { mode: 'accelerated-equivalent', status: 'architectural timing contract', summary: 'Makes the zero-cycle memory-read and synchronous write schedule explicit for fetch, LOAD and STORE.', layers: ['Fetch read and instruction-register sample', 'Execute LOAD read and register-file sample', 'Execute STORE edge write'] },
     'cpu-control-flow6': { mode: 'accelerated-equivalent', status: 'architectural control contract', summary: 'Uses the proven 0 / +1 equality result to select normal PC increment, a conditional BRZ target or an unconditional JUMP target.', layers: ['Equal comparison result', 'Three-trit address sign extension', 'PC increment/load controls'] },
     cpu6: { mode: 'accelerated-equivalent', status: 'documented architectural machine reference', summary: 'A complete six-trit fetch/execute CPU state boundary. Its public Memory 27×6 port, PC, register and instruction outputs make every architectural transition inspectable.', layers: ['Program counter and fetch/execute phase', 'Instruction decode and six-trit register file', 'ALU/write-back, branch control and Memory 27×6 port'], structuralImplementation: 'structural-cpu6-v1' },
