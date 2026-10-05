@@ -48,6 +48,7 @@
   let projectActionBusy = false;
   let lastProjectError = '';
   const stateTimeline = [];
+  const cpuDebug = { breakpoints: new Set(), trace: 'pc', highlightsEnabled: false };
 
   const history = { undo: [], redo: [], pending: null, restoring: false };
 
@@ -82,6 +83,15 @@
   const importProgramBtn = $('importProgramBtn');
   const exportProgramBtn = $('exportProgramBtn');
   const programFile = $('programFile');
+  const cpuPropagationStepBtn = $('cpuPropagationStepBtn');
+  const cpuDebugHighlightsBtn = $('cpuDebugHighlightsBtn');
+  const cpuBreakpointBtn = $('cpuBreakpointBtn');
+  const cpuClearBreakpointsBtn = $('cpuClearBreakpointsBtn');
+  const cpuTraceSelect = $('cpuTraceSelect');
+  const cpuTraceBtn = $('cpuTraceBtn');
+  const cpuClearTraceBtn = $('cpuClearTraceBtn');
+  const cpuAddProbeBtn = $('cpuAddProbeBtn');
+  const cpuOpenArchitectureBtn = $('cpuOpenArchitectureBtn');
   const programEditorDialog = $('programEditorDialog');
   const programEditorName = $('programEditorName');
   const programEditorDescription = $('programEditorDescription');
@@ -1663,6 +1673,10 @@
     if (!meta) return setStatus('Custom component definition is missing.', true);
     navigation.push({ context: current, view: renderer.getViewState(), index: navigation.length });
     const inner = new Circuit(registry);
+    // Do not eagerly evaluate a reusable definition merely to inspect it.
+    // This is essential for deep structural RAM hierarchies, where evaluation
+    // would otherwise instantiate every nested bank before the editor opens.
+    inner.setExecutionMode('manual');
     inner.load(meta.circuit);
     switchContext({ kind: 'custom', label: meta.label, circuit: inner, customId: meta.id });
     setStatus(`Opened ${meta.label}. You can open nested reusable components from the Inspector.`);
@@ -1675,12 +1689,20 @@
         ? buildStructuralInstructionRegisterDemo(false)
         : reference === 'structural-cpu6-v1'
         ? buildStructuralCpuArchitecture(false)
+        : reference === 'io-contract-cpu-io-adapter3x3-v1'
+        ? buildCpuIoAdapterArchitecture(false)
+        : reference === 'io-contract-cpu-program-loader6-v1'
+        ? buildCpuProgramLoaderArchitecture(false)
         : reference === 'structural-register-file3x6-v1'
         ? buildStructuralRegisterFileDemo(false)
         : reference === 'structural-program-counter6-v1'
         ? buildStructuralProgramCounterDemo(false)
         : reference === 'structural-register-bank3x6-v1'
         ? buildStructuralWordRegisterBankDemo(false)
+        : reference === 'structural-memory729x6-v1'
+        ? buildStructuralScaledMemoryDemo(729, false)
+        : reference === 'structural-memory243x6-v1'
+        ? buildStructuralScaledMemoryDemo(243, false)
         : reference === 'structural-memory81x6-v1'
         ? buildStructuralScaledMemoryDemo(81, false)
         : reference === 'structural-memory27x6-v1'
@@ -2516,24 +2538,104 @@
   function buildStructuralCpuArchitecture(loadDemo = false) {
     const label = uniqueName('Opening CPU — architecture reference', [...customComponents.values()].map((meta) => meta.label), 'Opening CPU — architecture reference');
     const id = `${slug(label)}-${Date.now().toString(36)}`, inner = new Circuit(registry);
+    inner.setExecutionMode('manual');
     const lanes = ['5', '4', '3', '2', '1', '0'];
     const clock = inner.addComponent('component-input', -620, -220, { name: 'clock' });
     const reset = inner.addComponent('component-input', -620, -150, { name: 'reset' });
     const memory = lanes.map((lane, index) => inner.addComponent('component-input', -620, -70 + index * 45, { name: `memoryData${lane}` }));
+    const writeBack = lanes.map((lane, index) => inner.addComponent('component-input', -620, 235 + index * 45, { name: `writeBack${lane}` }));
     const pc = inner.addComponent('program-counter6', -310, -210, { label: 'Program counter' });
     const sequencer = inner.addComponent('cpu-sequencer3', -310, 20, { label: 'Fetch / execute sequencer' });
     const instruction = inner.addComponent('instruction-register6', -60, -170, { label: 'Instruction register' });
     const control = inner.addComponent('instruction-control6', 180, -170, { label: 'Instruction decode / control' });
     const registers = inner.addComponent('register-file3x6', 180, 90, { label: 'Dual-read register file' });
+    const zero = inner.addComponent('word-zero6', 410, 265, { label: 'Rₐ is zero?' });
     const timing = inner.addComponent('cpu-memory-cycle6', 410, -70, { label: 'Memory-cycle timing' });
     const flow = inner.addComponent('cpu-control-flow6', 410, 130, { label: 'Branch / PC control' });
     const port = inner.addComponent('cpu-memory-port27', 650, 20, { label: 'Memory 27×6 port' });
     [pc, sequencer, instruction, registers].forEach((component) => { inner.connect(clock.id, 'out', component.id, 'clock'); inner.connect(reset.id, 'out', component.id, 'reset'); });
-    lanes.forEach((lane, index) => { inner.connect(memory[index].id, 'out', instruction.id, `instruction${lane}`); inner.connect(instruction.id, `instruction${lane}`, control.id, `instruction${lane}`); });
-    inner.connect(sequencer.id, 'phase', control.id, 'phase'); inner.connect(sequencer.id, 'phase', timing.id, 'phase'); inner.connect(control.id, 'memoryAction', timing.id, 'executeAction'); inner.connect(control.id, 'registerWrite', timing.id, 'executeRegisterWrite');
-    const meta = { id, type: `custom:${id}`, label, circuit: inner.serialize(), experiment: { role: 'documented CPU architecture reference', nodeCount: 8, depth: 5, primitiveCounts: { 'program-counter6': 1, 'cpu-sequencer3': 1, 'instruction-register6': 1, 'instruction-control6': 1, 'register-file3x6': 1, 'cpu-memory-cycle6': 1, 'cpu-control-flow6': 1, 'cpu-memory-port27': 1 }, rationale: 'This is the inspectable architecture map for the accelerated CPU machine boundary. Each named state, control and memory subsystem retains its own public contract and documented structural reference where available.', validation: 'The CPU6 machine contract exercises the corresponding public PC, register, control and memory transitions end-to-end.' } };
+    lanes.forEach((lane, index) => {
+      inner.connect(memory[index].id, 'out', instruction.id, `instruction${lane}`);
+      inner.connect(instruction.id, `instruction${lane}`, control.id, `instruction${lane}`);
+      inner.connect(writeBack[index].id, 'out', registers.id, `dataIn${lane}`);
+      inner.connect(registers.id, `readA${lane}`, zero.id, `t${lane}`);
+      inner.connect(registers.id, `readA${lane}`, flow.id, `ra${lane}`);
+      inner.connect(registers.id, `readB${lane}`, flow.id, `rb${lane}`);
+      inner.connect(flow.id, `target${lane}`, pc.id, `loadData${lane}`);
+      inner.connect(registers.id, `readB${lane}`, port.id, `dataIn${lane}`);
+    });
+    inner.connect(sequencer.id, 'phase', control.id, 'phase'); inner.connect(sequencer.id, 'phase', timing.id, 'phase'); inner.connect(sequencer.id, 'phase', flow.id, 'phase'); inner.connect(sequencer.id, 'phase', port.id, 'phase');
+    inner.connect(control.id, 'halt', sequencer.id, 'halt'); inner.connect(control.id, 'memoryAction', timing.id, 'executeAction'); inner.connect(control.id, 'registerWrite', timing.id, 'executeRegisterWrite'); inner.connect(timing.id, 'instructionLoad', instruction.id, 'load');
+    inner.connect(control.id, 'rd', registers.id, 'writeAddress'); inner.connect(control.id, 'ra', registers.id, 'readAAddress'); inner.connect(control.id, 'rb', registers.id, 'readBAddress'); inner.connect(control.id, 'registerWrite', registers.id, 'writeAction');
+    inner.connect(zero.id, 'zero', control.id, 'branchZero'); inner.connect(zero.id, 'zero', flow.id, 'compareEqual'); inner.connect(control.id, 'pcControl', flow.id, 'pcControlRequest'); inner.connect(control.id, 'pcLoad', flow.id, 'pcLoadRequest'); inner.connect(control.id, 'branchIfZero', flow.id, 'branchIfZero'); inner.connect(flow.id, 'pcControl', pc.id, 'control'); inner.connect(flow.id, 'pcLoad', pc.id, 'load');
+    ['2', '1', '0'].forEach((lane) => { inner.connect(pc.id, `pc${lane}`, port.id, `pc${lane}`); inner.connect(registers.id, `readA${lane}`, port.id, `ra${lane}`); });
+    inner.connect(timing.id, 'action', port.id, 'executeAction');
+    const meta = { id, type: `custom:${id}`, label, circuit: inner.serialize(), experiment: { role: 'documented CPU architecture reference', nodeCount: 9, depth: 6, primitiveCounts: { 'program-counter6': 1, 'cpu-sequencer3': 1, 'instruction-register6': 1, 'instruction-control6': 1, 'register-file3x6': 1, 'word-zero6': 1, 'cpu-memory-cycle6': 1, 'cpu-control-flow6': 1, 'cpu-memory-port27': 1 }, rationale: 'This architecture map wires the actual fetch/decode, register-address, zero-compare, branch/PC and memory-port contracts together. The ALU/immediate/write-back result remains an explicit external boundary because the current accelerated CPU owns that combined execution path.', validation: 'The CPU6 machine contract exercises the corresponding public PC, register, control and memory transitions end-to-end.' } };
     customComponents.set(id, meta); registerCustom(meta); structuralReferences.set('structural-cpu6-v1', meta);
     return { 'structural-cpu6-v1': meta };
+  }
+
+  function buildCpuIoAdapterArchitecture(loadDemo = false) {
+    const label = uniqueName('CPU I/O adapter — port-map reference', [...customComponents.values()].map((meta) => meta.label), 'CPU I/O adapter — port-map reference');
+    const id = `${slug(label)}-${Date.now().toString(36)}`, inner = new Circuit(registry);
+    inner.setExecutionMode('manual');
+    const lanes = ['5', '4', '3', '2', '1', '0'];
+    const address = lanes.map((lane, index) => inner.addComponent('component-input', -500, -280 + index * 42, { name: `cpuAddress${lane}` }));
+    const data = lanes.map((lane, index) => inner.addComponent('component-input', -500, 15 + index * 42, { name: `cpuData${lane}` }));
+    const ramData = lanes.map((lane, index) => inner.addComponent('component-input', -500, 310 + index * 42, { name: `ramData${lane}` }));
+    const action = inner.addComponent('component-input', -500, 590, { name: 'cpuAction' });
+    const clock = inner.addComponent('component-input', -500, 640, { name: 'clock' });
+    const reset = inner.addComponent('component-input', -500, 690, { name: 'reset' });
+    const enabled = inner.addComponent('component-input', -500, 740, { name: 'ioEnable' });
+    const joystickX = inner.addComponent('component-input', -500, 790, { name: 'joystickX' });
+    const joystickY = inner.addComponent('component-input', -500, 840, { name: 'joystickY' });
+    const decode = inner.addComponent('probe', -120, 680, { label: 'I/O decode enabled: −4 / −3 / +4' });
+    const outputs = [
+      ...lanes.map((lane, index) => inner.addComponent('component-output', 350, -280 + index * 42, { name: `ramAddress${lane}` })),
+      ...lanes.map((lane, index) => inner.addComponent('component-output', 350, 15 + index * 42, { name: `ramDataIn${lane}` })),
+      ...lanes.map((lane, index) => inner.addComponent('component-output', 350, 310 + index * 42, { name: `cpuData${lane}` })),
+      inner.addComponent('component-output', 350, 590, { name: 'ramAction' }), inner.addComponent('component-output', 350, 640, { name: 'displayClock' }), inner.addComponent('component-output', 350, 690, { name: 'displayReset' }),
+      inner.addComponent('component-output', 350, 740, { name: 'displayX' }), inner.addComponent('component-output', 350, 790, { name: 'displayY' }), inner.addComponent('component-output', 350, 840, { name: 'displayColor' }),
+      inner.addComponent('component-output', 350, 890, { name: 'joystickXPayloadToCpuData2' }), inner.addComponent('component-output', 350, 940, { name: 'joystickYPayloadToCpuData1' }),
+    ];
+    lanes.forEach((lane, index) => { inner.connect(address[index].id, 'out', outputs[index].id, 'in'); inner.connect(data[index].id, 'out', outputs[6 + index].id, 'in'); inner.connect(ramData[index].id, 'out', outputs[12 + index].id, 'in'); });
+    inner.connect(action.id, 'out', outputs[18].id, 'in'); inner.connect(clock.id, 'out', outputs[19].id, 'in'); inner.connect(reset.id, 'out', outputs[20].id, 'in'); inner.connect(data[3].id, 'out', outputs[21].id, 'in'); inner.connect(data[4].id, 'out', outputs[22].id, 'in'); inner.connect(data[5].id, 'out', outputs[23].id, 'in'); inner.connect(joystickX.id, 'out', outputs[24].id, 'in'); inner.connect(joystickY.id, 'out', outputs[25].id, 'in'); inner.connect(enabled.id, 'out', decode.id, 'in');
+    const meta = { id, type: `custom:${id}`, label, circuit: inner.serialize(), experiment: { role: 'documented I/O port-map reference', nodeCount: 1, depth: 1, primitiveCounts: { probe: 1 }, rationale: 'This is a non-recursive boundary map for the external I/O adapter. Address decoding is deliberately documented rather than disguised as internal CPU logic: −4 and −3 select joystick reads; +4 selects a packed display write; all other transactions are RAM pass-through.', validation: 'The CPU I/O adapter contract verifies the decoded joystick reads, RAM pass-through and packed display write.' } };
+    customComponents.set(id, meta); registerCustom(meta); structuralReferences.set('io-contract-cpu-io-adapter3x3-v1', meta);
+    if (!loadDemo) return { 'io-contract-cpu-io-adapter3x3-v1': meta };
+    rootCircuit.clear(); rootCircuit.addComponent(meta.type, 0, 0, { label }); renderer.select(null); renderLibrary(); updateStats(); resetHistory();
+    return { 'io-contract-cpu-io-adapter3x3-v1': meta };
+  }
+
+  function buildCpuProgramLoaderArchitecture(loadDemo = false) {
+    const label = uniqueName('CPU program loader — port-map reference', [...customComponents.values()].map((meta) => meta.label), 'CPU program loader — port-map reference');
+    const id = `${slug(label)}-${Date.now().toString(36)}`, inner = new Circuit(registry);
+    inner.setExecutionMode('manual');
+    const lanes = ['5', '4', '3', '2', '1', '0'];
+    const clock = inner.addComponent('component-input', -390, -210, { name: 'clock' });
+    const entryAddress = lanes.map((lane, index) => inner.addComponent('component-input', -390, -155 + index * 42, { name: `currentEntryAddress${lane}` }));
+    const entryData = lanes.map((lane, index) => inner.addComponent('component-input', -390, 145 + index * 42, { name: `currentEntryData${lane}` }));
+    const done = inner.addComponent('component-input', -390, 450, { name: 'doneState' });
+    const cpuReset = inner.addComponent('component-input', -390, 500, { name: 'cpuResetState' });
+    const write = inner.addComponent('ternary-reference', -120, 75, { value: 1, label: 'Public memory write (+1)' });
+    const transaction = inner.addComponent('probe', -120, -210, { label: 'Next program word → public memory write' });
+    const outputs = [
+      ...lanes.map((lane, index) => inner.addComponent('component-output', 250, -250 + index * 48, { name: `address${lane}` })),
+      inner.addComponent('component-output', 250, 65, { name: 'action' }),
+      ...lanes.map((lane, index) => inner.addComponent('component-output', 250, 120 + index * 48, { name: `data${lane}` })),
+      inner.addComponent('component-output', 250, 435, { name: 'done' }), inner.addComponent('component-output', 250, 485, { name: 'cpuReset' }),
+    ];
+    // The stored program/index is fixture state. These named boundaries make
+    // its externally observable write transaction explicit without creating
+    // a second hidden memory-loading path.
+    inner.connect(clock.id, 'out', transaction.id, 'in');
+    lanes.forEach((lane, index) => { inner.connect(entryAddress[index].id, 'out', outputs[index].id, 'in'); inner.connect(entryData[index].id, 'out', outputs[7 + index].id, 'in'); });
+    inner.connect(write.id, 'out', outputs[6].id, 'in'); inner.connect(done.id, 'out', outputs[13].id, 'in'); inner.connect(cpuReset.id, 'out', outputs[14].id, 'in');
+    const meta = { id, type: `custom:${id}`, label, circuit: inner.serialize(), experiment: { role: 'documented program-loader port-map reference', nodeCount: 1, depth: 1, primitiveCounts: { probe: 1 }, rationale: 'The loader owns only program/index fixture state. On each rising clock edge while active it presents one ordinary address/data/action=+1 RAM transaction, holds CPU reset, then exposes done=+1 and cpuReset=0 after the final word.', validation: 'The CPU machine contract loads a complete program through this public transaction interface before execution.' } };
+    customComponents.set(id, meta); registerCustom(meta); structuralReferences.set('io-contract-cpu-program-loader6-v1', meta);
+    if (!loadDemo) return { 'io-contract-cpu-program-loader6-v1': meta };
+    rootCircuit.clear(); rootCircuit.addComponent(meta.type, 0, 0, { label }); renderer.select(null); renderLibrary(); updateStats(); resetHistory();
+    return { 'io-contract-cpu-program-loader6-v1': meta };
   }
 
   function buildDeviceCellsDemo() {
@@ -3679,6 +3781,8 @@
       9: { childLocations: 3, childReference: 'structural-memory3x6-v1', addressWidth: 2, childAddressNames: ['address'] },
       27: { childLocations: 9, childReference: 'structural-memory9x6-v1', addressWidth: 3, childAddressNames: ['address1', 'address0'] },
       81: { childLocations: 27, childReference: 'structural-memory27x6-v1', addressWidth: 4, childAddressNames: ['address2', 'address1', 'address0'] },
+      243: { childLocations: 81, childReference: 'structural-memory81x6-v1', addressWidth: 5, childAddressNames: ['address3', 'address2', 'address1', 'address0'] },
+      729: { childLocations: 243, childReference: 'structural-memory243x6-v1', addressWidth: 6, childAddressNames: ['address4', 'address3', 'address2', 'address1', 'address0'] },
     };
     const config = configurations[locations];
     if (!config) throw new Error(`No scaled-memory hierarchy is defined for ${locations} locations.`);
@@ -3688,6 +3792,9 @@
       : buildStructuralScaledMemoryDemo(config.childLocations, false)[config.childReference];
     const label = uniqueName(`Memory ${locations}×6 — structural`, [...customComponents.values()].map((meta) => meta.label), `Memory ${locations}×6 — structural`);
     const id = `${slug(label)}-${Date.now().toString(36)}`, inner = new Circuit(registry);
+    // This is an inspectable hierarchy. Building it must not instantiate and
+    // simulate all descendant banks just because their symbols are placed.
+    inner.setExecutionMode('manual');
     const addressNames = Array.from({ length: config.addressWidth }, (_, index) => `address${config.addressWidth - 1 - index}`);
     const lanes = ['5', '4', '3', '2', '1', '0'];
     const inputNames = [...lanes.map((n) => `dataIn${n}`), ...addressNames, 'action', 'clock', 'reset'];
@@ -3729,7 +3836,12 @@
         validation: 'Shares the direct accelerated memory read/write/reset sequence suite; invalid or unresolved addressing cannot select a child bank.',
       },
     };
-    customComponents.set(id, meta); registerCustom(meta); structuralReferences.set(`structural-memory${locations}x6-v1`, meta); verifyStructuralReference(meta);
+    customComponents.set(id, meta); registerCustom(meta); structuralReferences.set(`structural-memory${locations}x6-v1`, meta);
+    // Opening a deep RAM hierarchy must stay responsive. Running the full
+    // recursive equivalence workload while materialising 243×6 or 729×6
+    // expands many nested banks before the editor can render anything.
+    // Keep that workload for an explicitly loaded structural demo instead.
+    if (loadDemo) verifyStructuralReference(meta);
     if (!loadDemo) return { [`structural-memory${locations}x6-v1`]: meta };
     rootCircuit.clear(); rootCircuit.addComponent(meta.type, 0, 0, { label }); renderer.select(null); renderLibrary(); updateStats(); resetHistory();
     setStatus(`Structural Memory ${locations}×6 loaded. Open internals to inspect its three-bank balanced address hierarchy.`);
@@ -4130,7 +4242,7 @@ HALT`;
     const context = computerConsoleContext();
     if (!context) return setStatus('Open Runnable CPU console before loading a program.', true);
     const program = normalizeProgram(data);
-    stopComputerRun(); rootCircuit.setState(context.loader.id, { program: program.words, programName: program.name, index: 0, active: true }); rootCircuit.simulate();
+    stopComputerRun(); setCpuDebugHighlights(false, { announce: false }); rootCircuit.setState(context.loader.id, { program: program.words, programName: program.name, index: 0, active: true }); rootCircuit.simulate();
     for (let step = 0; step < program.words.length * 2; step += 1) computerClockStep({ announce: false });
     const memoryLabel = context.memory?.state?.label || 'program / data memory';
     setStatus(`Loaded “${program.name}” through ${memoryLabel}. CPU is reset at PC 0 and has not executed; inspect the memory list, then Run computer or Instruction step.`);
@@ -4169,12 +4281,85 @@ HALT`;
     return true;
   }
 
+  function cpuPcAddress(cpu) {
+    const word = Array.isArray(cpu?.state?.pc) ? cpu.state.pc.map(trit) : [];
+    return word.length === 6 && word.every((value) => value === -1 || value === 0 || value === 1) ? word.reduce((total, value) => total * 3 + value, 0) : null;
+  }
+
+  function setCpuDebugHighlights(enabled, { announce = true } = {}) {
+    cpuDebug.highlightsEnabled = Boolean(enabled);
+    if (!cpuDebug.highlightsEnabled) renderer.setDebugHighlights();
+    if (cpuDebugHighlightsBtn) cpuDebugHighlightsBtn.textContent = cpuDebug.highlightsEnabled ? 'Hide CPU highlights' : 'Show CPU highlights';
+    if (announce) setStatus(cpuDebug.highlightsEnabled ? 'CPU execution highlights enabled.' : 'CPU execution highlights hidden.');
+  }
+
+  function cpuDebugHighlights(trace = cpuDebug.trace) {
+    if (!cpuDebug.highlightsEnabled) return;
+    const context = computerConsoleContext();
+    if (!context) return;
+    const source = trace === 'memory' ? (context.io || context.memory) : context.cpu;
+    const outputPrefix = trace === 'memory' ? 'dataOut' : trace;
+    const wireIds = [...rootCircuit.wires.values()].filter((wire) => wire.from.componentId === source?.id && /^([a-zA-Z]+)([0-5])$/.test(wire.from.port) && wire.from.port.startsWith(outputPrefix)).map((wire) => wire.id);
+    const componentIds = new Set([context.cpu.id, source?.id, context.memory?.id].filter(Boolean));
+    wireIds.forEach((id) => { const wire = rootCircuit.wires.get(id); if (wire) { componentIds.add(wire.from.componentId); componentIds.add(wire.to.componentId); } });
+    renderer.setDebugHighlights({ components: [...componentIds], wires: wireIds });
+  }
+
+  function highlightCpuActivity() {
+    if (!cpuDebug.highlightsEnabled) return;
+    const context = computerConsoleContext();
+    if (!context) return;
+    const phase = trit(context.cpu.state.phase);
+    const ids = [context.cpu.id, context.memory?.id, context.io?.id].filter(Boolean);
+    if (context.loader.state.active) ids.push(context.loader.id);
+    const wireIds = [...rootCircuit.wires.values()].filter((wire) => ids.includes(wire.from.componentId) || ids.includes(wire.to.componentId)).map((wire) => wire.id);
+    renderer.setDebugHighlights({ components: ids, wires: wireIds });
+    addStateTimeline('cpu-wave', context.cpu.id, `PC ${cpuPcAddress(context.cpu) ?? '?'} · ${phase === 0 ? 'fetch' : phase === 1 ? 'execute' : phase === -1 ? 'halted' : '?'} · IR ${Array.isArray(context.cpu.state.instruction) ? context.cpu.state.instruction.map(fmtTimelineValue).join(' ') : '?'}`);
+  }
+
+  function toggleBreakpointAtPc() {
+    const context = computerConsoleContext();
+    const pc = cpuPcAddress(context?.cpu);
+    if (pc === null) return setStatus('PC is not a known six-trit address yet.', true);
+    if (cpuDebug.breakpoints.has(pc)) { cpuDebug.breakpoints.delete(pc); setStatus(`Removed breakpoint at PC ${pc}.`); }
+    else { cpuDebug.breakpoints.add(pc); setStatus(`Breakpoint added at PC ${pc}. Run computer stops before this instruction.`); }
+  }
+
+  function traceCpuWord() {
+    cpuDebug.trace = cpuTraceSelect.value;
+    setCpuDebugHighlights(true, { announce: false });
+    cpuDebugHighlights(cpuDebug.trace);
+    setStatus(`Tracing ${cpuTraceSelect.options[cpuTraceSelect.selectedIndex].text}. Highlighted wires follow the selected six-trit word.`);
+  }
+
+  function clearCpuTrace() {
+    setCpuDebugHighlights(false, { announce: false });
+    setStatus('CPU trace cleared; execution highlights are hidden.');
+  }
+
+  function addCpuWordProbe() {
+    const context = computerConsoleContext();
+    if (!context) return setStatus('Open Runnable CPU console before adding a probe.', true);
+    const trace = cpuTraceSelect.value;
+    const source = trace === 'memory' ? (context.io || context.memory) : context.cpu;
+    const prefix = trace === 'memory' ? 'dataOut' : trace;
+    const probe = rootCircuit.addComponent('word-probe6', (source.x || 0) + 300, (source.y || 0) + 430, { label: `CPU debug probe: ${trace}` });
+    ['5', '4', '3', '2', '1', '0'].forEach((lane) => rootCircuit.connect(source.id, `${prefix}${lane}`, probe.id, `t${lane}`));
+    rootCircuit.simulate(); renderer.selectComponent(probe.id); setStatus(`Added a six-trit probe for ${trace}.`);
+  }
+
+  function openCpuArchitectureForDebug() {
+    if (!computerConsoleContext()) return setStatus('Open Runnable CPU console before drilling into its architecture.', true);
+    openStructuralImplementation('structural-cpu6-v1');
+  }
+
   function computerInstructionStep() {
     const context = computerConsoleContext();
     if (!context) return setStatus('Open Runnable CPU console before stepping the computer.', true);
     // A complete instruction occupies one fetch edge and one execute edge;
     // the intervening falling transitions return the shared clock to zero.
     for (let edge = 0; edge < 4; edge += 1) computerClockStep({ announce: false });
+    highlightCpuActivity();
     setStatus(context.cpu.outputs.halted === 1 ? 'Instruction step completed: computer is halted.' : 'Instruction step completed: one fetch/execute pair ran.');
   }
 
@@ -4184,6 +4369,8 @@ HALT`;
     computerRunTimer = setInterval(() => {
       const context = computerConsoleContext();
       if (!context || context.cpu.outputs.halted === 1) { stopComputerRun(); if (context?.cpu.outputs.halted === 1) setStatus('Computer halted.'); return; }
+      const pc = cpuPcAddress(context.cpu);
+      if (pc !== null && cpuDebug.breakpoints.has(pc)) { stopComputerRun(); highlightCpuActivity(); setStatus(`Breakpoint hit at PC ${pc}.`); return; }
       computerInstructionStep();
     }, 180);
     updateComputerControls(); setStatus('Computer running instruction-by-instruction.');
@@ -4226,6 +4413,7 @@ HALT`;
       if (cpuChange) {
         const phase = trit(cpuChange.after.phase), pc = Array.isArray(cpuChange.after.pc) && cpuChange.after.pc.every((value) => value === -1 || value === 0 || value === 1) ? cpuChange.after.pc.reduce((total, value) => total * 3 + value, 0) : '?';
         addStateTimeline('cpu', cpuChange.componentId, `PC ${pc} · ${phase === 0 ? 'fetch' : phase === 1 ? 'execute' : phase === -1 ? 'halted' : '?'}`);
+        if (current.kind === 'root') highlightCpuActivity();
       }
     const selectedComponentType = renderer.selection?.kind === 'component'
       ? circuit().components.get(renderer.selection.id)?.type
@@ -4300,6 +4488,14 @@ HALT`;
     computerInstructionBtn.addEventListener('click', computerInstructionStep);
     computerClockBtn.addEventListener('click', () => computerClockStep());
     loadExampleProgramBtn.addEventListener('click', () => loadProgram(computerConsoleContext()?.io ? ioExampleProgram() : exampleProgram()));
+    cpuPropagationStepBtn.addEventListener('click', () => { setCpuDebugHighlights(true, { announce: false }); stepOnce(); highlightCpuActivity(); });
+    cpuDebugHighlightsBtn.addEventListener('click', () => setCpuDebugHighlights(!cpuDebug.highlightsEnabled));
+    cpuBreakpointBtn.addEventListener('click', toggleBreakpointAtPc);
+    cpuClearBreakpointsBtn.addEventListener('click', () => { cpuDebug.breakpoints.clear(); setStatus('All CPU breakpoints cleared.'); });
+    cpuTraceBtn.addEventListener('click', traceCpuWord);
+    cpuClearTraceBtn.addEventListener('click', clearCpuTrace);
+    cpuAddProbeBtn.addEventListener('click', addCpuWordProbe);
+    cpuOpenArchitectureBtn.addEventListener('click', openCpuArchitectureForDebug);
     writeProgramBtn.addEventListener('click', openProgramEditor);
     loadWrittenProgramBtn.addEventListener('click', loadWrittenProgram);
     importProgramBtn.addEventListener('click', () => programFile.click());

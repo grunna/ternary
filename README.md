@@ -1,298 +1,88 @@
 <p align="center">
-  <img src="assets/ternary-lab-icon.png" alt="Ternary Lab icon" width="180" />
+  <img src="assets/ternary-lab-icon.png" alt="Ternary Lab icon" width="160" />
 </p>
 
 # Ternary Lab
 
-The current six-trit CPU instruction reference is in [ISA.md](ISA.md).
+A visual balanced-ternary sandbox: build circuits, open their implementations, simulate signals, and follow a small ternary computer from instruction to I/O.
 
-A static balanced-ternary circuit simulator built with plain JavaScript and PixiJS. No TypeScript, npm, bundler or backend is required.
+[Get started](#get-started) · [Tutorials](tutorials/README.md) · [ISA](ISA.md) · [Design](DESIGN.md) · [Roadmap](ROADMAP.md)
 
-## In the simulator
-
-<p align="center">
-  <img src="screenshot/small-computer.png" alt="Ternary Lab running the interactive ternary CPU with program memory, joystick and 3×3 pixel display" width="900" />
-</p>
+## See the simulator
 
 <p align="center">
-  <img src="screenshot/7seg-display.png" alt="Inspectable structural 3-trit signed display decoder in Ternary Lab" width="900" />
+  <img src="screenshot/small-computer.png" alt="Ternary Lab's small CPU with program memory, joystick, and 3×3 pixel display" width="900" />
 </p>
 
-## Architecture promise
+The small computer has program memory, registers, an ALU, a program counter, and explicit I/O adapters. Parts can be opened down through the hierarchy where a structural implementation is available.
 
-Ternary Lab may use fast simulator implementations, but they must never be opaque magic blocks. Every high-level component is intended to have an inspectable structural construction from lower-level ternary parts, ending at the project’s technology-neutral cell boundary. Optimized execution is only an accelerator for that same behavior and must be verified against its structural version. The simulator stops above actual transistor and voltage modeling; “physically viable” means structurally realizable in principle, ready for a later technology mapping. Read the evolving policy in [ARCHITECTURE.md](ARCHITECTURE.md).
+<p align="center">
+  <img src="screenshot/7seg-display.png" alt="An inspectable structural 3-trit display decoder in Ternary Lab" width="900" />
+</p>
 
-## Run
+## Get started
 
-Just open the index.html in a web browser
+1. Open `index.html` in a modern browser, or run `npx serve . -l 3000`.
+2. Choose an example from **Demo projects**.
+3. Select a component and read its contract in the Inspector panel.
+4. Use **Open internals** or **Open structural implementation**, when available, to descend one level.
 
-You can also run in NodeJs with **npx serve . -l 3000**
+For a first circuit, follow [Tutorial 1: Your first circuit](tutorials/01-your-first-circuit.md). For the CPU, begin with [Tutorial 3: Run and debug a program](tutorials/03-cpu-program.md).
 
-## Editor controls
+## What can it build?
 
-- Drag blocks to move them.
-- Click an output, then **pointer-down/click an input** to connect.
-- Or drag an output and release over an input.
-- Click an already connected input to start rewiring it.
-- Select a block or wire and press Delete/Backspace.
-- Ctrl/Cmd+Z = undo.
-- Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z = redo.
-- Drag empty background to pan; mouse wheel zooms.
-- Use **Auto layout** to arrange connected components in signal-flow columns without overlap.
+- Ternary combinational logic with `-1`, `0`, `+1`, and explicit `Z` and `?` states.
+- Reusable, nested components with named ports and saved contract tests.
+- Sequential logic: latches, registers, memory, clocks, and program counters.
+- A six-trit CPU with loadable programs, stepping, tracing, and breakpoints.
+- Human I/O including a joystick, word displays, a seven-segment display, and a 3×3 pixel display.
 
-## Signal states
+## Tutorials
 
-`-1`, `0` and `+1` are driven logical ternary values. `?` means unknown or unresolved. `Z` means a pass switch deliberately does not drive the wire (floating); ordinary logic needs a driven input and therefore returns `?` for `Z`. A purely combinational feedback loop is rejected. A loop is allowed only when its path crosses an explicitly declared stateful component, such as `Storage node` or a structural latch that contains one.
+The guides are short and build on one another. They are meant to be followed in the simulator, not merely read.
 
-## Reusable / hierarchical components
+| Guide | You will learn |
+| --- | --- |
+| [1. Your first circuit](tutorials/01-your-first-circuit.md) | Place, connect, and try a simple trit circuit. |
+| [2. Create a reusable component](tutorials/02-reusable-component.md) | External ports, internal circuits, and hierarchy. |
+| [3. Run and debug a program](tutorials/03-cpu-program.md) | Load programs, step the CPU, and read program memory. |
+| [4. Debug signals and the CPU](tutorials/04-debugging.md) | Probes, timeline, tracing, and breakpoints. |
 
-Version 6 adds reusable circuit-backed components.
+## Documentation
 
-1. Press **New component**.
-2. The component opens as its own circuit.
-3. Use **Component Input** blocks for external inputs.
-4. Use **Component Output** blocks for external outputs.
-5. Select a boundary block and rename its external port in the Inspector.
-6. Build the internal logic from primitives or other reusable components.
-7. Press **Back** (or Save) to update the definition.
-8. The component appears under **Reusable components** and can be instantiated multiple times.
-9. Select a reusable instance and press **Open internals** in Inspector to drill into it.
-10. Reusable components may contain other reusable components, so you can drill down through multiple levels.
+| Document | Contents |
+| --- | --- |
+| [tutorials/](tutorials/README.md) | Practical step-by-step guides with screenshots. |
+| [ISA.md](ISA.md) | Current CPU instructions and the direction for Base ISA and `EXT`. |
+| [DESIGN.md](DESIGN.md) | Technical decisions, component contracts, and architecture notes. |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | The principle that behavioral components should be structurally inspectable. |
+| [ROADMAP.md](ROADMAP.md) | Completed work and upcoming phases. |
 
-To extract an existing design, Shift+click or box-select its blocks, then choose **Create component from selection** in Inspector. Internal wiring moves into the new reusable component; connections crossing the selection edge become named Component Input/Output ports. Component dependency cycles, including indirect cycles such as `A → B → A`, are rejected.
+## Working in the editor
 
-Reusable components can be removed from the library with **Remove**. Removal is blocked while the component is still instantiated in the project or referenced by another reusable component.
+- Drag components to move them and drag the background to pan.
+- Click an output and then an input to connect, or drag directly between them.
+- Click a connected input to rewire it. Delete/Backspace removes selected objects.
+- The mouse wheel zooms. Ctrl/Cmd+Z undoes and Ctrl/Cmd+Y redoes.
+- **RUN**, **VISUALIZE**, **STEP**, and **CLOCK STEP** control simulation progress.
 
-Breadcrumbs show the current hierarchy, for example:
+`-1`, `0`, and `+1` are driven logic levels. `Z` means a floating disconnected signal and `?` means an unknown or unresolved signal. Combinational feedback loops are rejected; storage must pass through an explicitly stateful component.
 
-`Project > ALU > Adder > Normalize`
+## Projects and sharing
 
-The direct self-reference of a component is hidden while editing that component. General cycle detection between custom definitions is a later task.
+Projects are stored locally in the browser. You can create several projects, export/import `.ternary.json` files, and share reusable components as `.ternary-component.json` packages. CPU programs can be loaded, written, imported, and exported from the **Program** menu.
 
-### Current hierarchy model
+## Architecture principle
 
-Custom components are real circuit definitions, not visual groups. Their public ports are derived from the `Component Input` and `Component Output` boundary blocks. During simulation, a custom block evaluates its internal circuit, so nested custom components work recursively.
+The simulator may use fast reference implementations, but not opaque magic blocks. A high-level component should have an inspectable structural path down to the project's technology-neutral cell boundary. Optimized execution is a faster way to execute the same specified behavior, not different semantics.
 
-Reusable components retain a separate serialized internal runtime for every placed instance. This means a nested `storage-node3` or other stateful primitive holds its value between evaluations without leaking state to another instance. Saving a changed reusable definition increments its runtime version, so existing instances safely reinitialize from the new structure.
+## Source map
 
-## Project files
+- `index.html` — application shell and menus.
+- `styles.css` — interface styling.
+- `js/core.js` — ternary values, circuit model, and component evaluation.
+- `js/renderer.js` — PixiJS workspace and interaction.
+- `js/storage.js` — local IndexedDB storage.
+- `js/app.js` — UI, demos, CPU tools, and component library.
 
-Phase 12 component decisions and the CPU control-signal audit are recorded in [DESIGN.md](DESIGN.md).
-
-- `index.html` — static application shell
-- `styles.css` — application styling
-- `js/core.js` — ternary values, circuit model, custom-component evaluation
-- `js/renderer.js` — PixiJS workspace/editor rendering and interaction
-- `js/storage.js` — IndexedDB storage
-- `js/app.js` — UI, navigation, history, reusable component library
-- `ROADMAP.md` — complete Phase 1–17 checklist
-
-## Known next steps
-
-The next major editor milestone is stateful sequential components: explicit clock-edge semantics, registers and per-instance internal runtime. That is the foundation for a ternary CPU's program counter and register bank.
-
-
-## v9 patch notes
-
-This version intentionally keeps the complete v6 UI and editor behavior. It adds:
-
-- reliable click-to-click connection fallback on canvas pointer-down
-- isolated reusable-component testing in the existing right panel
-- `-1 / 0 / +1` buttons for every external Component Input
-- live external Component Output values
-- Component Input blocks can also be clicked directly to cycle their test value
-
-The component test uses the real internal circuit, including nested reusable components.
-
-Saved component tests live below the input/output controls while editing a reusable component. Give the current setup a name and choose **Save current** to store its input values and current outputs as an expected-result regression case. **Run saved** reports every failing port. **Run all combinations** produces the full ternary truth table (`3^n` rows) for components with up to six inputs.
-
-Before saving a test, set its expected output values explicitly in **Expected outputs for next saved case**. If a later edit removes a port used by a saved test, the runner reports that its component contract changed instead of silently treating the test as valid.
-
-Use **Demo** to load a self-contained experiment. Loading any demo replaces the root circuit, reusable-component library and saved component tests, so the selected demo is always shown on its own. The Full Adder reference has `a`, `b`, `c` inputs and `sum`, `carry` outputs; its saved suite covers all 27 ternary input combinations.
-
-## Phase 12 adder experiments
-
-`Normalize / carry` is the reference full-adder implementation. Every alternative must expose the same `a`, `b`, `c` → `sum`, `carry` contract and pass the same 27 saved cases before it is considered a candidate. Record its primitive set, node count and design rationale alongside the component; do not replace the reference implementation.
-
-Choose **Adder comparison** in the Demo menu to create three saved full-adder implementations: a one-node Normalize reference, an a+b cascaded-normalize construction, and a b+c pairwise cascade. All have the same exhaustive 27-case suite. Selecting an instance shows its primitive inventory, logical node count, critical depth and rationale in the Inspector; comparison is intentionally limited to logical structure and behavior.
-
-Choose **Primitive set comparison** in the Demo menu to create a full-adder baseline for every current preset set. The result is deliberately recorded rather than hidden: every current set includes `Normalize / carry`, so all four implement the contract in one primitive node and pass the same 27 cases. Their extra primitives are therefore not a full-adder advantage yet; they remain candidates for the following comparator, selector and control experiments.
-
-Choose **Comparator comparison** in the Demo menu to compare a direct `Compare` reference with normalized-difference candidates. The candidate creates a stable zero using `Normalize(a,a,a).sum`, normalizes `a-b`, and uses `Select3` to preserve the sign across a normalized overflow. Each comparator has the `a`, `b` → `out` contract and an exhaustive 9-case suite.
-
-Choose **Selector / router** to inspect `Select3` (`neg, zero, pos, select → out`) and its reciprocal `Route3` (`in, select → neg, zero, pos`). Their saved suites cover 81 and 9 cases. Inactive Route3 paths are deliberately driven to zero.
-
-Choose **Ternary control signals** to test `Adjust3`: `-1 / 0 / +1` means decrement / hold / increment and exposes carry for a multi-trit program counter. The same demo also records `-1 / 0 / +1` as read / idle / write. That action remains one packed trit; its three one-hot outputs are an explicit adapter only when separate downstream paths require it.
-
-This is the design decision for the CPU path: retain the packed control trit through the datapath and only decode it at an explicit downstream branch. `Adjust3` is the intended PC/running-counter primitive; `Control3 decode` is intentionally not a general replacement for ternary control, but the boundary adapter for distinct read, idle and write hardware paths.
-
-Component and test-case names are unique within their respective project scopes. If a name is already used, Ternary Lab assigns the next available suffix, such as `Adder 2`.
-
-Component Input and Component Output ports are named uniquely as soon as they are added: `in`, `in 2`, … and `out`, `out 2`, …. Renaming a port uses the same rule.
-
-## Ternary sequential storage
-
-Choose **Ternary latch / register** in the Demo menu to load the storage experiment. The **Ternary latch** is transparent only while `enable = +1`; `0` and `-1` hold its current trit. The **Ternary register** is a hardware-like D flip-flop: it captures `d` only when `load = +1` and `clock` transitions from `0` to `+1`. Changing data while the clock stays high does not alter `q`. A new storage element begins as `?` until reset is clocked.
-
-The demo uses ordinary Trit Inputs for `D`, `LOAD`, `CLK` and `RESET`: set `D` and `LOAD` to `+1`, then change `CLK` from `0` to `+1`. The register updates automatically; there is no simulator-only commit control. Use `0` before the next pulse. Reset is synchronous: set reset to `+1` and provide a rising clock edge to restore the initial value `0`.
-
-## v12 simulation controls and sequence generators
-
-The propagation scheduler is persistent and inspectable instead of always being hidden inside a full settle.
-
-- **RUN** — normal editing; changes settle immediately.
-- **VISUALIZE** — executes one real propagation event at a configurable interval.
-- **Pause / Resume** — pauses both propagation and automatic sequence generators.
-- **STEP** — executes exactly one queued component-evaluation event.
-- **CLOCK STEP** — advances every Sequence Generator by exactly one item in its sequence.
-- **Event queue** — shows queued component evaluations and why they were scheduled.
-- **Settle circuit now** — drains the current queue immediately regardless of UI mode.
-
-### Sequence Generator
-
-The old fixed clock is replaced in the component library by a configurable **Sequence Generator**. It can act as a conventional clock or as a ternary periodic control source. Select it to configure it in Inspector.
-
-Built-in presets:
-
-- `0 ↔ +1` clock
-- `-1 → 0 → +1 → -1 ...` ternary loop
-- `-1 → 0 → +1 → 0 → -1 ...` ternary ping-pong
-- custom sequences such as `0, 0, +1, 0, -1`
-
-Each generator has its own interval (milliseconds), loop/ping-pong mode and optional auto-run. The interval controls when the generator advances; VISUALIZE speed still controls how quickly queued logical propagation events are displayed.
-
-The legacy `Clock` type is retained internally so older saved projects can still load. New circuits should use Sequence Generator.
-
-
-## v13 primitive experiments
-
-The primitive library can now be switched between experiment sets without invalidating existing circuits. Current candidate primitives include `MIN`, `MAX`, and `Normalize / carry` (`A+B+C = Sum + 3×Carry`). Each candidate carries logical structural metadata. The project deliberately does not estimate transistor count, voltage encoding, delay or power.
-
-Preset sets include **All candidates**, **MIN / MAX**, **Compare / Select**, **Arithmetic core**, plus a **Custom experiment** assembled with checkboxes. The active experiment is saved with the project.
-
-## Reusable component packages
-
-The **Reusable components** library holds the small blocks that can be placed and opened inside any project. Use **Export** on a component to save a `.ternary-component.json` package. Its nested reusable dependencies and its saved test suites are included. Use **Import** in the library to load a package from another project or person; imported components receive fresh internal ids and a unique label, so they cannot overwrite the current project’s components.
-
-**Demo projects** are different: they are larger, self-contained workspaces intended to explain or test a system. The 3-trit signed display decoder is one such project; its useful smaller parts can be exported separately when they become reusable.
-
-## Project persistence
-
-Projects are stored locally in the browser with IndexedDB. **New project** creates a separate empty project with the next available name (`New project`, `New project 2`, and so on); duplicate project names are rejected. Choose a project in the **Project** menu and use **Delete project** to remove it after confirmation. The active project is autosaved when it changes and the most recently used project is reopened on the next start.
-
-- Use **New project** to create another named project.
-- Rename the current project in the name field in the top toolbar.
-- The project selector switches between locally saved projects.
-- **Save now** forces an immediate save; normal editing is autosaved about every 1.5 seconds.
-- **Export JSON** creates a portable `.ternary.json` backup.
-- **Import JSON** imports older/current project files and stores the imported project locally.
-- Primitive-set selection, reusable components and the test-suite storage slot are part of the project format.
-- Project format version 6 includes a migration entry point so older project data can be upgraded when loaded.
-
-
-## Technology-neutral device cells
-
-Signal states are distinct: `-1`, `0` and `+1` are driven logic levels; `?` means unknown/unresolved; `Z` means a switch deliberately drives no value (floating). In this single-driver simulator, ordinary logic and a restorer treat `Z` as unavailable and return `?`.
-
-Choose **Structural latch / register** to compare behavioral reference blocks with their opening structural versions. Select **Register — two structural latches**, choose **Open internals**, then open either latch to reach its restorer, pass switch and storage node. The shared input controls drive both versions, so their probes can be compared directly. The Inspector gives the same comparison dimensions for every option: nodes, depth, wires and canonical write transitions.
-
-Choose **Ternary device cells** to explore the new lower abstraction layer. **Ternary restorer**, **Ternary level detector**, **Ternary pass switch**, **Ternary resolved merge** and **Ternary storage node** are ideal structural cells: they define level restoration, detection, gated transmission, explicit bus merging and retention without choosing a transistor technology. A disabled pass switch emits `Z`; this is distinct from an unresolved `?`. `Merge3` joins three mutually exclusive pass paths: one active driven path is valid, all floating paths remain `Z`, and contention or uncertainty becomes `?`.
-A **Ternary reference rail** supplies an explicit fixed `-1`, `0` or `+1` level when a structural circuit needs one; it prevents hidden JavaScript constants from becoming part of circuit behavior.
-
-## 7-segment output
-
-Choose **7-segment display** to load a visible output component with eight independent inputs: `A`–`G` and `Sign`. This peripheral intentionally uses two-state control: `0` means off and `+1` means on. A `-1`, `?` or `Z` input is rendered as an invalid segment state instead of silently becoming off. The display contains no number decoder; the future ternary decoder will be a separate, openable logic component that drives these eight ports. When editing a reusable component, choose **7-segment Output** under **Component interface** to make this visual display the component’s visible output; connect internal logic to its A–G/Sign ports.
-
-**Segment-control boundary:** the display is deliberately a two-state peripheral. Inside a decoder, signals remain ternary and `-1 / 0 / +1` may each have a meaning. At its final boundary, each LED-like segment only needs **off** or **on**, represented by `0 / +1`. This conversion is explicit and openable; `-1`, `?` and `Z` are kept visible as invalid instead of being coerced to off.
-
-Choose **1-trit signed display decoder** for the smallest open decoder. Its sole trit maps to `-1`, `0` and `+1`. Open it to see the complete construction: `Threshold3` produces one-hot rails, `MAX` creates the shared segments for digit 1, and `MIN` produces an explicit off signal for the middle segment. Its three input cases are checked exhaustively.
-
-Choose **3-trit signed display decoder** to load an opening fixed-range experiment. Its inputs have weights `9`, `3` and `1`; the 19 words for `-9 … +9` show a signed decimal digit, while the eight remaining three-trit words are blank. Its gate-level mapping has been checked across all 27 input words. Open the component to inspect the full gate network: three level detectors, exact-match MIN chains, and MAX trees for each segment.
-
-**First CPU word decision:** the first CPU word is one **tryte**: six balanced trits covering `−364 … +364` (729 states). It is deliberately small enough to keep the first register, ALU and display experiments open and understandable. A **trit** is one balanced ternary digit; a **memory location** holds one addressed tryte. We deliberately do not use “byte”, which specifically means eight binary bits.
-
-**Native multi-trit display decision:** CPU words are shown directly as a row of `−`, `0` and `+` glyphs, one per trit with the most-significant trit on the left. For example, `+ 0 −` means `(+1 × 9) + (0 × 3) + (−1 × 1) = +8`. This has no separate sign trit and requires no number conversion. Balanced-ternary-to-decimal rendering is deliberately not built into the debugger: a user who wants it can build an explicit converter and connect multiple 7-segment displays.
-
-## Six-trit CPU word
-
-Choose **6-trit word component** to load the reusable word boundary for the first CPU. It carries `t5 … t0` unchanged in most-significant-first order, with weights `243, 81, 27, 9, 3, 1`. It is intentionally neither a register nor an ALU: it establishes a clear six-lane interface which later reusable components can share. Every one of its 729 possible input words is saved as a contract case.
-
-## Six-trit ripple adder
-
-Choose **6-trit ripple adder** to load the first reusable CPU arithmetic block. It accepts `A5 … A0`, `B5 … B0` and `Carry in`, then produces `Sum5 … Sum0` and `Carry out`. Open it to see six `Normalize / carry` cells. Carry begins at the least-significant `t0` cell and ripples toward `t5`; the output represents `A + B + Carry in = Sum + 729 × Carry out`.
-
-`Carry out` is a signed extension trit, not a binary overflow bit: `-1` means the mathematical result is below `−364`, `0` means it fits, and `+1` means it is above `+364`. The visible six-trit result is always the canonical modulo-729 result; arithmetic does not silently saturate or trap. The subtractor uses the same convention: `Carry out = -1` is negative underflow (the borrow direction), while `+1` is positive overflow.
-
-## Six-trit negate / subtract
-
-Choose **6-trit negate / subtract** to load two nested reusable arithmetic blocks. **6-trit negate** flips each balanced trit independently and has no carry path. **6-trit subtractor** connects that negated B word to six `Normalize / carry` cells, so it computes `A − B + Carry in = Difference + 729 × Carry out`. Open the subtractor and then its negator to inspect both levels.
-
-## Six-trit comparator
-
-Choose **6-trit comparator** to load the reusable word comparator. Its native `Order` output is `-1` for less-than, `0` for equality and `+1` for greater-than. It also provides one-hot `Less`, `Equal` and `Greater` outputs using the explicit `0 / +1` control convention. Open it to see six `Compare` blocks and the five `Select3` stages that retain the first non-equal result from `t5` toward `t0`.
-
-## Six-trit Select3
-
-Choose **6-trit Select3** to load the reusable word selector. Its one shared select trit chooses the complete `Neg`, `Zero` or `Pos` input word: `-1`, `0` and `+1` respectively. Open it to see the six parallel Select3 cells; no binary-style control decode is introduced.
-
-## Six-trit Route3
-
-Choose **6-trit Route3** to load the matching word read-path router. The shared select trit routes its input word to `Neg`, `Zero` or `Pos`; every lane on the two inactive paths is explicitly `0`. This makes inactive read behavior visible and prevents a path from being mistaken for a floating or retained value.
-
-## First six-trit ALU contract
-
-The first ALU will use one packed balanced operation trit, rather than a binary opcode bundle:
-
-- `−1`: `A − B`
-- `0`: pass `A`
-- `+1`: `A + B`
-
-Addition and subtraction report the existing signed range-extension trit; pass-A reports `0`. An unknown/floating operation, or data used by the selected operation, makes the ALU result unknown. B is intentionally irrelevant for pass-A. Comparisons and condition decisions remain separate reusable components rather than hidden ALU side effects.
-
-Choose **6-trit ALU comparison** to inspect the decision before the ALU is fixed. Candidate A chooses `−B`, `0` or `+B` before one Normalize/carry ripple (19 nodes); Candidate B computes add and subtract in parallel, then chooses a result (26 nodes). Both have depth 8 and the same saved contract vectors, so Candidate A is the selected opening shape.
-
-Choose **6-trit ALU** to load the selected reusable component. Set `Op` to `−1`, `0` or `+1`, then open the component to inspect the selected operand feeding one ripple chain. Its child Negate, Select3 and Normalize/carry components retain their structural-reference actions in the Inspector.
-
-## I/O peripherals
-
-I/O components are explicit external adapters, not extra ternary logic primitives. Inputs drive a declared trit/word value after normal propagation; output devices only observe settled signals and never feed a value back. A clocked peripheral, such as the planned pixel display, changes its own state only on its documented clock edge.
-
-Every I/O device must show `Z` (floating) and `?` (unknown/invalid) distinctly from logical `0`. It must also declare its port contract, reset behavior and update timing in the Inspector.
-
-The library distinguishes three things that can otherwise look alike: **User I/O peripherals** are controls and displays intended for a person using the finished machine; **Test, debug & internal sources** drive or observe signals while designing and diagnosing circuits; **Module interface** blocks only declare ports on a reusable component. A `Component Input` is therefore not a physical user button, and a `Probe` is not a finished-machine display.
-
-**Interactive trit input** is the first I/O source adapter. Add it from **Inputs & observation**, then select it: the Inspector can drive `−1`, `0`, `+1`, `Z` or `?`. Clicking its value badge in the workspace remains a quick cycle through the three known trit levels.
-
-**Interactive 6-trit word input** is the matching word-level adapter. Its Inspector has independent controls for `t5 … t0`, so several inputs can drive different words at the same time. Each lane can independently be `−1`, `0`, `+1`, `Z` or `?`.
-
-**Interactive input button** is a two-level source for user controls. Click its `PRESS` area in the workspace. In Inspector, choose momentary, toggle or pulse behavior and the released/pressed levels; it defaults to `0` released and `+1` pressed.
-
-**Interactive ternary joystick** has independent `x` and `y` outputs. Click a position on its 3×3 pad in the workspace or Inspector: center is `0,0`, cardinal positions use one nonzero axis, and corners produce diagonal `−1/+1` combinations.
-
-**Interactive analog 6-trit joystick** has six output lanes for each axis: `x5…x0` and `y5…y0`. Drag its pad to generate independent values from `−364` to `+364`; the small center dead zone resolves to zero. Inspector also permits exact numeric positions. It uses the same six-trit word width as the current datapath, so no scaling adapter is needed.
-
-**6-trit word display** is an end-user output peripheral. Connect `t5…t0` and it renders one glyph per lane: `−`, `0`, `+`, `Z` or `?`. It observes signals only; it has no output back into the circuit.
-
-**6-trit decimal debug view** is not a peripheral or structural conversion component. It is a test/debug observer that quickly shows a settled known `t5…t0` word as its decimal value (`−364 … +364`). It shows an invalid marker when any lane is `Z` or `?` and has no output back into the circuit.
-
-**Trit LED** is a one-trit end-user indicator. It visibly samples `−1`, `0`, `+1`, `Z` or `?` without driving the circuit. **6-trit word probe** is its compact debug counterpart: it shows all six word lanes for diagnosis and has no circuit output.
-
-**Binary LED** is a separate two-terminal LED module: both `−1` and `+1` turn it on, while `0` turns it off. `Z` and `?` are not physical LED states; the editor flags them as invalid wiring so they can be corrected.
-
-**Pixel Display 3×3 contract:** the first clocked display has ternary `x`, `y` and `color` ports plus `clock` and `reset`. `x = −1/0/+1` chooses left/centre/right; `y = +1/0/−1` chooses top/centre/bottom. Every known `0 → +1` clock edge writes the known `color` trit; `color=0` erases one pixel. `reset=+1` on that same edge clears the whole frame and has priority. `Z`, `?`, or unsupported `−1` control values never modify pixels and are reported as invalid I/O.
-
-**Pixel Display 3×3** is now available under *User I/O peripherals*. Connect its five ports and use a `Clock` or `Sequence generator` to make the required `0 → +1` edge. Its 3×3 frame stores the written ternary pixel values privately; it never drives a circuit signal back out.
-
-**RGB Display 24×24** has two experimental I/O profiles. Both store 24×24 pixels with three six-trit RGB words per pixel (18 trits): **addressed** accepts two four-trit coordinates and writes one selected pixel; **raster stream** uses only one ternary `data` wire and one `clock` wire. Eighteen clocked trits (`R5…R0`, `G5…G0`, `B5…B0`) write the next raster pixel. They are named accelerated display references, so their large frame is visible and testable without pretending it is already an expanded structural panel.
-
-The future memory-mapped display adapter uses the same balanced address, six-trit data, ternary read/idle/write action, clock and reset contract as CPU memory. Its serial-data register turns each six-trit CPU write into six display trits; three writes produce one RGB pixel.
-
-**Memory contract:** `action=−1` reads the addressed value combinatorially after propagation settles; `action=0` is idle; `action=+1` writes known data to a known address only on `clock: 0 → +1`. `reset=+1` on that edge resets every location and has priority. Memory begins unresolved until reset; invalid, unknown or floating access never changes stored state and produces `?` instead of a guessed read value.
-
-**Memory 3×1** is the first reusable memory block under *State & timing*. It has three addressed ternary locations. Its native evaluator is linked to **Memory 3×1 — structural**; select the block and use **Open structural implementation**, then **Open internals**, to inspect the three structural registers, address decoder, action-gated write paths and `Select3` read path.
-
-**Memory 3×6** stores three complete trytes, one per memory location. One valid write edge updates all six lanes together. Its contract test writes and reads every one of the 729 trytes at all three addresses (2,187 word transactions), and a `6-trit word probe` or `6-trit word display` can be connected directly to `dataOut5…dataOut0` for inspection.
-
-## Register bank
-
-**Ternary register bank** demo provides three stored trits addressed by `-1 / 0 / +1`. Its action input is `-1 = read`, `0 = idle`, `+1 = write`; a write occurs on the clock rising edge when action is `+1`.
+Detailed historical decisions and component descriptions deliberately live in [DESIGN.md](DESIGN.md), keeping this front page a quick way into the project.

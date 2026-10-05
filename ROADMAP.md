@@ -359,13 +359,13 @@ Memory is completed before CPU integration. It must be a reusable, inspectable s
 - [x] Load a small ternary program
 - [x] Instruction step
 - [x] Clock step
-- [ ] Propagation step
-- [ ] Highlight active components
-- [ ] Follow a trit through the CPU
-- [ ] Breakpoints
-- [ ] Probes
-- [ ] Waveform/timeline
-- [ ] Drill from CPU to primitive implementation while debugging
+- [x] Propagation step
+- [x] Highlight active components
+- [x] Follow a trit through the CPU
+- [x] Breakpoints
+- [x] Probes
+- [x] Waveform/timeline
+- [x] Drill from CPU to primitive implementation while debugging
 
 ## Phase 20 — Example programs and computer demonstrations
 
@@ -413,6 +413,34 @@ Cartridges are external program/game packages. They write ordinary transactions 
 - [ ] Import/export standalone cartridge files and validate compatibility before loading
 - [ ] Show inserted-cartridge metadata, load progress, entry point and memory map in the console
 - [ ] Support cartridge examples built from the existing CPU, display and input interfaces, including small games
+
+## Phase 22 — Portable Base ISA, extensions and width profiles
+
+This phase turns the agreed ISA direction into an executable compatibility contract. The opening CPU remains a deliberately small 6-trit implementation while these changes are introduced behind explicit version/profile boundaries.
+
+### Phase 22A — Base opcode map and `EXT`
+
+- [ ] Publish the Base ISA v1 opcode registry: 26 Base opcode slots plus permanent `+++ = EXT`
+- [ ] Define the canonical `EXT` header (`+++ 0 0 0`), extension-ID fetch, extension payload framing and malformed-encoding behaviour
+- [ ] Extend instruction fetch/decode so `EXT` consumes a following six-trit extension ID without corrupting PC or instruction stepping
+- [ ] Define unsupported-extension behaviour: detectable capability failure/trap state, never silent execution with the wrong meaning
+- [ ] Extend the assembler, program editor, disassembler and memory inspector to render `EXT` instructions and extension IDs
+
+### Phase 22B — Extension governance and capabilities
+
+- [ ] Define permanent ID ranges for standard, experimental, vendor/custom and private/local extensions
+- [ ] Version and publish the extension registry; prevent published standard IDs from changing meaning
+- [ ] Define a ternary capability-report contract for Base ISA version, width profile and supported extension IDs
+- [ ] Add program/cartridge metadata for required Base ISA version, width profile, extensions and declared Base fallback
+- [ ] Validate a program before loading and show a clear missing-capability diagnostic
+
+### Phase 22C — Multi-tryte registers and addresses
+
+- [ ] Define width-profile rules: a tryte remains six trits while registers and addresses are `6 × n` trits
+- [ ] Define Base ISA encodings for multi-tryte immediates, register operands and memory addresses
+- [ ] Build and test a 12-trit address/register profile (`3^12 = 531,441` addresses) without changing tryte semantics
+- [ ] Specify the 18-trit profile (`3^18 = 387,420,489` addresses) and its practical simulator-memory strategy
+- [ ] Keep 6-trit programs runnable on wider profiles wherever their operands and addresses fit
 
 ## v9 additions
 

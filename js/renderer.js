@@ -104,6 +104,8 @@
       this.selection = null; // { kind: 'component'|'components'|'wire', id/ids }
       this.selectedId = null; // Backwards-compatible: selected component id only.
       this.selectedComponentIds = new Set();
+      this.debugComponentIds = new Set();
+      this.debugWireIds = new Set();
       this.boxSelection = null;
       this.selectionBoxGraphic = null;
       this.pendingWire = null; // { componentId, port, originalWireId? }
@@ -717,10 +719,11 @@
       const view = this.nodeViews.get(id);
       if (!view) return;
       const selected = this.selectedComponentIds.has(id);
+      const debug = this.debugComponentIds.has(id);
       view.body.clear()
         .roundRect(0, 0, view.width, view.height, 10)
         .fill(COLORS.node)
-        .stroke({ color: selected ? COLORS.nodeSelected : COLORS.nodeBorder, width: selected ? 2.5 : 1.5 });
+        .stroke({ color: selected ? COLORS.nodeSelected : debug ? COLORS.wireSelected : COLORS.nodeBorder, width: selected ? 2.5 : debug ? 2.5 : 1.5 });
     }
 
     refreshComponentView(id) {
@@ -919,14 +922,15 @@
       const geo = this.wireGeometry(wire);
       if (!geo) return;
       const selected = this.selection?.kind === 'wire' && this.selection.id === id;
+      const debug = this.debugWireIds.has(id);
       const g = view.g;
       g.clear();
       g.moveTo(geo.start.x, geo.start.y)
         .bezierCurveTo(geo.cp1.x, geo.cp1.y, geo.cp2.x, geo.cp2.y, geo.end.x, geo.end.y)
-        .stroke({ color: selected ? COLORS.wireSelected : 0xffffff, width: selected ? 13 : 11, alpha: selected ? 0.28 : 0.002 });
+        .stroke({ color: selected || debug ? COLORS.wireSelected : 0xffffff, width: selected || debug ? 13 : 11, alpha: selected || debug ? 0.28 : 0.002 });
       g.moveTo(geo.start.x, geo.start.y)
         .bezierCurveTo(geo.cp1.x, geo.cp1.y, geo.cp2.x, geo.cp2.y, geo.end.x, geo.end.y)
-        .stroke({ color: selected ? COLORS.wireSelected : signalColor(wire.value), width: selected ? 4 : 3 });
+        .stroke({ color: selected || debug ? COLORS.wireSelected : signalColor(wire.value), width: selected || debug ? 4 : 3 });
 
       view.label.text = wire.label || '';
       view.label.visible = Boolean(wire.label);
@@ -934,6 +938,14 @@
         const p = this.cubicPoint(geo, 0.5);
         view.label.position.set(p.x, p.y - 10);
       }
+    }
+
+    setDebugHighlights({ components = [], wires = [] } = {}) {
+      const previousComponents = new Set(this.debugComponentIds), previousWires = new Set(this.debugWireIds);
+      this.debugComponentIds = new Set((components || []).filter((id) => this.circuit.components.has(id)));
+      this.debugWireIds = new Set((wires || []).filter((id) => this.circuit.wires.has(id)));
+      new Set([...previousComponents, ...this.debugComponentIds]).forEach((id) => this.drawNode(id));
+      new Set([...previousWires, ...this.debugWireIds]).forEach((id) => this.refreshWire(id));
     }
 
     findIncomingWire(componentId, port) {

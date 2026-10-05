@@ -1,6 +1,6 @@
-# Opening ternary CPU ISA
+# Ternary ISA
 
-This is the executable instruction-set reference for the first six-trit balanced-ternary CPU.
+This document separates the **executable opening CPU profile** from the decided direction for the portable Base ISA and its future extensions. The opening profile is intentionally small; it is not yet a complete implementation of the extension architecture below.
 
 ## Word and register format
 
@@ -35,7 +35,66 @@ An instruction completes in fetch then execute. Fetch reads the instruction word
 | `− + +` | `NOP` | No data operation; advance PC normally. |
 | `+ − −` | `LIT Rd, Imm1, Imm0` | Write the two-trit balanced literal `Imm1 Imm0` (`−4 … +4`) to `Rd`. `Ra` and `Rb` are literal digits, not register addresses. |
 
-All remaining 17 opcodes are reserved. A reserved or malformed instruction is a safe no-op: it does not write registers, memory or PC.
+`+ + +` is reserved as the future `EXT` opcode. It is currently a safe no-op in the opening CPU because extension fetch/decode has not been implemented yet. The other 16 unassigned opcode values remain reserved for future Base ISA instructions. A reserved or malformed instruction is a safe no-op in the opening profile: it does not write registers, memory or PC.
+
+## Base ISA and `EXT` direction
+
+The portable Base ISA keeps one **tryte** at exactly six trits. Its instruction header stays:
+
+```text
+Op2 Op1 Op0 Rd Ra Rb
+```
+
+The three-trit opcode field has `3^3 = 27` values. Twenty-six values are the Base ISA space; they may be assigned over time, but an unassigned Base opcode must remain reserved rather than silently gain a local meaning. The remaining value is permanently reserved for `EXT`:
+
+```text
+++ 0 0 0       EXT (canonical header)
+next tryte      six-trit extension ID
+extension data  defined by that extension ID
+```
+
+The opening profile currently treats every `+++` word as reserved. A future EXT-capable CPU will fetch the following tryte as the extension ID, giving `3^6 = 729` stable extension namespaces. The non-zero operand fields of an `EXT` header are reserved for future encoding rules and must not acquire a local meaning.
+
+### Extension governance
+
+Extension IDs are permanent public names: once a standard ID is published, its meaning must never change. The registry will partition IDs into four documented classes before the first ID is allocated:
+
+- standard extensions;
+- experimental extensions;
+- vendor/custom extensions;
+- private/local extensions.
+
+Standard extensions normally accelerate functionality that remains expressible in Base ISA. For example, `EXT MUL` may provide a hardware multiply, while a portable program keeps a slower Base ISA sequence as fallback. Device extensions such as graphics, audio or networking may instead require their physical device.
+
+```text
+Base ISA = portable functionality
+EXT      = optional acceleration or specialised hardware
+```
+
+### Capabilities
+
+A CPU profile will report a Base ISA version plus the extension IDs it supports. A conceptual report might contain:
+
+```text
+BASE v1
+EXT_MATH
+EXT_FLOAT
+EXT_VECTOR
+```
+
+Loaders, assemblers and programs can then select an extension sequence only when the required capability is present, otherwise use a Base ISA fallback. The exact binary/ternary capability-report format is deliberately not fixed yet.
+
+### Width and addressing evolution
+
+A tryte is always six trits, independent of CPU generation. Registers, operands and addresses are allowed to grow by whole trytes:
+
+| Profile example | Register/address width | Addressable values |
+| --- | --- | --- |
+| Opening profile | 6 trits / 1 tryte | `3^6 = 729` |
+| Wider profile | 12 trits / 2 trytes | `3^12 = 531,441` |
+| Wider profile | 18 trits / 3 trytes | `3^18 = 387,420,489` |
+
+The Base ISA should remain source- and behaviour-compatible where practical, while each width profile explicitly defines how multi-tryte immediates, registers and addresses are encoded. This prevents the opening 729-address memory from becoming a permanent architectural limit.
 
 ## Addressing
 

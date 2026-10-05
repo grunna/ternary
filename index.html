@@ -91,6 +91,22 @@
             </div>
           </div>
         </details>
+        <details class="toolbar-menu">
+          <summary>Debug</summary>
+          <div class="toolbar-menu-panel">
+            <div class="toolbar-group utility-actions" aria-label="CPU debugging">
+              <button id="cpuPropagationStepBtn">Propagation step</button>
+              <button id="cpuDebugHighlightsBtn">Show CPU highlights</button>
+              <button id="cpuBreakpointBtn">Breakpoint at PC</button>
+              <button id="cpuClearBreakpointsBtn">Clear breakpoints</button>
+              <label class="menu-field"><span>Trace word</span><select id="cpuTraceSelect"><option value="pc">PC</option><option value="instruction">Instruction</option><option value="memory">Memory data</option><option value="rNeg">R−</option><option value="rZero">R0</option><option value="rPos">R+</option></select></label>
+              <button id="cpuTraceBtn">Trace selected word</button>
+              <button id="cpuClearTraceBtn">Clear trace</button>
+              <button id="cpuAddProbeBtn">Add word probe</button>
+              <button id="cpuOpenArchitectureBtn">Open CPU architecture</button>
+            </div>
+          </div>
+        </details>
       </div>
       <input id="programFile" type="file" accept="application/json,.json,.ternary-program.json" hidden />
       <details class="toolbar-menu more-menu">

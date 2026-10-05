@@ -57,7 +57,7 @@ The opening CPU datapath uses one shared known `0 → +1` clock edge. Before tha
 
 ## Opening CPU instruction set
 
-An instruction is exactly one six-trit word, ordered most-significant first: `Op2 Op1 Op0 Rd Ra Rb`. `Rd`, `Ra` and `Rb` are one-trit register addresses (`−1 = R−`, `0 = R0`, `+1 = R+`), except that `LIT` reuses its final two fields as a small literal. Three opcode trits create 27 primary slots: the opening CPU uses ten and reserves the remaining 17, including room for an eventual extension form. Reserved or malformed instructions are safe no-ops: they do not write a register, memory or PC.
+An instruction is exactly one six-trit word, ordered most-significant first: `Op2 Op1 Op0 Rd Ra Rb`. `Rd`, `Ra` and `Rb` are one-trit register addresses (`−1 = R−`, `0 = R0`, `+1 = R+`), except that `LIT` reuses its final two fields as a small literal. Three opcode trits create 27 primary slots: the opening CPU uses ten, reserves `+++` as the canonical future `EXT` header, and leaves the other 16 unassigned Base ISA slots reserved. The opening evaluator still treats `+++` as a safe no-op until multi-tryte extension decode exists. The portable Base ISA/EXT policy is maintained in [ISA.md](ISA.md).
 
 | Opcode | Mnemonic | Meaning |
 | --- | --- | --- |
@@ -65,14 +65,14 @@ An instruction is exactly one six-trit word, ordered most-significant first: `Op
 | `− − 0` | `MOV Rd, Ra` | `Rd ← Ra`. |
 | `− − +` | `ADD Rd, Ra, Rb` | `Rd ← Ra + Rb`, using the established wrapping ALU contract. |
 | `− 0 −` | `SUB Rd, Ra, Rb` | `Rd ← Ra − Rb`. |
-| `− 0 0` | `LOAD Rd, [Ra]` | Read `Memory 27×6` at the low three trits of `Ra`, then write the returned tryte to `Rd`. |
-| `− 0 +` | `STORE [Ra], Rb` | Write `Rb` to `Memory 27×6` at the low three trits of `Ra`; `Rd` is ignored. |
-| `− + −` | `JUMP Ra` | Load PC from the low three trits of `Ra`, sign-extended to a six-trit address. |
-| `− + 0` | `BRZ Ra, Rb` | If `Ra` is exactly zero, load PC from the low three trits of `Rb`; otherwise advance normally. |
+| `− 0 0` | `LOAD Rd, [Ra]` | Read the attached memory at the full six-trit address in `Ra`, then write the returned tryte to `Rd`. |
+| `− 0 +` | `STORE [Ra], Rb` | Write `Rb` at the full six-trit address in `Ra`; `Rd` is ignored. |
+| `− + −` | `JUMP Ra` | Load PC from the full six-trit value in `Ra`. |
+| `− + 0` | `BRZ Ra, Rb` | If `Ra` is exactly zero, load PC from the full six-trit value in `Rb`; otherwise advance normally. |
 | `− + +` | `NOP` | Advance normally with no write. |
 | `+ − −` | `LIT Rd, Imm1, Imm0` | Write the two-trit balanced literal `Imm1 Imm0` (`−4 … +4`) to `Rd`. This bootstraps useful program constants after reset. |
 
-`Memory 27×6` is the opening program/data store. Its address is an ordered three-trit word `a2 a1 a0`, representing `−13…+13`; `LOAD`, `STORE`, `JUMP` and `BRZ` take that address from the three least-significant trits of their named address register. This makes indirect addressing explicit and keeps all memory traffic on the established public memory-port contract. Fetch is zero-cycle combinational: the controller presents PC's low three trits with memory action `−1`, lets the instruction word settle, then performs decode/execute on a later state edge. A future `EXT` opcode may consume the following tryte as a full-width immediate or address without changing this base format.
+`Memory 27×6` is the small opening program/data store and exposes the low three CPU address lanes (`−13…+13`). `Memory 729×6` exposes all six lanes (`−364…+364`). The CPU itself uses full six-trit addresses for `LOAD`, `STORE`, `JUMP` and `BRZ`, keeping indirect addressing and all traffic on the established public memory-port contract. Fetch is zero-cycle combinational: the controller presents PC's address with memory action `−1`, lets the instruction word settle, then performs decode/execute on a later state edge. The future `EXT` form consumes a following tryte as an extension ID; wider immediates and addresses are a Phase 22 width-profile decision.
 
 The opening sequencer has three states: **fetch**, **execute** and **halted**. In fetch it requests the instruction word with memory action `−1` and asserts instruction-register load; the following edge enters execute. In execute it applies the decoded register, ALU, memory and PC controls to the captured instruction; the following edge returns to fetch, except `HALT` enters halted. Reset always returns to fetch and clears PC, the instruction register, register file and memory through their existing public reset ports. A fetch edge never writes architectural state other than the instruction register; an execute edge never replaces that instruction register.
 
@@ -82,19 +82,19 @@ The opening sequencer has three states: **fetch**, **execute** and **halted**. I
 
 | Phase | Memory action and address | Closing-edge state changes |
 | --- | --- | --- |
-| Fetch | `−1` read at PC low trits | Instruction register captures the settled instruction; no register-file, memory or PC update occurs. |
-| Execute: `LOAD` | `−1` read at `Ra` low trits | Register file writes the settled memory word to `Rd`; PC advances normally. |
-| Execute: `STORE` | `+1` write `Rb` at `Ra` low trits | Memory commits `Rb`; PC advances normally. |
+| Fetch | `−1` read at PC address | Instruction register captures the settled instruction; no register-file, memory or PC update occurs. |
+| Execute: `LOAD` | `−1` read at `Ra` address | Register file writes the settled memory word to `Rd`; PC advances normally. |
+| Execute: `STORE` | `+1` write `Rb` at `Ra` address | Memory commits `Rb`; PC advances normally. |
 | Execute: arithmetic, `MOV`, `NOP` | `0` idle | The selected register result commits where applicable; PC advances normally. |
-| Execute: `JUMP` / taken `BRZ` | `0` idle | PC loads the sign-extended low-three-trit target; no normal adjustment occurs. |
+| Execute: `JUMP` / taken `BRZ` | `0` idle | PC loads the full six-trit target; no normal adjustment occurs. |
 
 The named `CPU memory-cycle timing` control exposes this schedule as packed `action`, `instructionLoad`, `readSample`, `loadWrite` and `storeWrite` trits. `readSample=+1` means that the public memory output must already be stable for the same upcoming edge; it is a timing declaration, not a separate binary handshake.
 
-`BRZ` uses the existing six-trit all-zero equality result: `Equal=+1` is a taken branch, `Equal=0` is not taken, and `?` keeps PC control invalid so no ambiguous state update can commit. `JUMP` loads the low three trits of `Ra`; a taken `BRZ` uses those of `Rb`. A balanced-ternary address is widened by **zero-prefixing**, not two's-complement-style sign extension: target `a2 a1 a0` becomes `0 0 0 a2 a1 a0`, preserving its value `−13 … +13` in the six-trit PC. The named `CPU branch / PC control` component turns these proven equality and decoded control outputs into the PC's packed `Control`, `Load` and six target-trit ports.
+`BRZ` uses the existing six-trit all-zero equality result: `Equal=+1` is a taken branch, `Equal=0` is not taken, and `?` keeps PC control invalid so no ambiguous state update can commit. `JUMP` loads the six trits of `Ra`; a taken `BRZ` uses those of `Rb`. The named `CPU branch / PC control` component turns these proven equality and decoded control outputs into the PC's packed `Control`, `Load` and six target-trit ports.
 
 ### Minimal runnable machine
 
-`Opening ternary CPU — 6-trit` is the documented architectural machine boundary used by the runnable console. It owns PC, three six-trit registers, the captured instruction and fetch/execute/halted phase. Its only data connection is the public `Memory 27×6` port: three address trits, packed read/idle/write action and six write-data trits leave the CPU; six memory-data trits return. It exposes PC, all registers, instruction and phase as observer outputs, so each architectural edge can be checked while the underlying register, ALU, memory and control contracts remain separately drillable.
+`Opening ternary CPU — 6-trit` is the documented architectural machine boundary used by the runnable console. It owns PC, three six-trit registers, the captured instruction and fetch/execute/halted phase. Its public memory connection has six address trits, packed read/idle/write action and six write-data trits; a small `Memory 27×6` console deliberately wires only the low three address lanes, while the 729×6 console uses all six. It exposes PC, all registers, instruction and phase as observer outputs, so each architectural edge can be checked while the underlying register, ALU, memory and control contracts remain separately drillable.
 
 The first runnable fixture writes its program through that public memory port before releasing CPU reset. It executes `LIT`, `ADD`, `STORE`, `LOAD`, `BRZ` and `HALT`, proving arithmetic, memory transfer, branching and PC transitions end-to-end. `LIT` is intentionally small (`−4 … +4`): it only bootstraps constants after reset and does not introduce a hidden program-initialization state.
 
