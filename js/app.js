@@ -78,6 +78,7 @@
   const computerRunBtn = $('computerRunBtn');
   const computerInstructionBtn = $('computerInstructionBtn');
   const computerClockBtn = $('computerClockBtn');
+  const computerSpeedSelect = $('computerSpeedSelect');
   const loadExampleProgramBtn = $('loadExampleProgramBtn');
   const writeProgramBtn = $('writeProgramBtn');
   const importProgramBtn = $('importProgramBtn');
@@ -4298,7 +4299,7 @@
   }
 
   function stopComputerRun() {
-    if (computerRunTimer) clearInterval(computerRunTimer);
+    if (computerRunTimer) { clearInterval(computerRunTimer); clearTimeout(computerRunTimer); }
     computerRunTimer = null;
     if (computerRunBtn) computerRunBtn.textContent = 'Run computer';
   }
@@ -4393,27 +4394,55 @@
     openStructuralImplementation('structural-cpu6-v1');
   }
 
-  function computerInstructionStep() {
+  function computerInstructionStep({ announce = true } = {}) {
     const context = computerConsoleContext();
     if (!context) return setStatus('Open Runnable CPU console before stepping the computer.', true);
     // A complete instruction occupies one fetch edge and one execute edge;
     // the intervening falling transitions return the shared clock to zero.
     for (let edge = 0; edge < 4; edge += 1) computerClockStep({ announce: false });
     highlightCpuActivity();
-    setStatus(context.cpu.outputs.halted === 1 ? 'Instruction step completed: computer is halted.' : 'Instruction step completed: one fetch/execute pair ran.');
+    if (announce) setStatus(context.cpu.outputs.halted === 1 ? 'Instruction step completed: computer is halted.' : 'Instruction step completed: one fetch/execute pair ran.');
   }
 
+  function cpuRunDelay() { return computerSpeedSelect?.value === 'max' ? null : Math.max(10, Number(computerSpeedSelect?.value) || 180); }
+  function cpuRunSpeedLabel() { return computerSpeedSelect?.options[computerSpeedSelect.selectedIndex]?.text || 'Normal'; }
+  function runComputerInstruction() {
+    const context = computerConsoleContext();
+    if (!context || context.cpu.outputs.halted === 1) {
+      stopComputerRun();
+      if (context?.cpu.outputs.halted === 1) setStatus('Computer halted.');
+      return false;
+    }
+    const pc = cpuPcAddress(context.cpu);
+    if (pc !== null && cpuDebug.breakpoints.has(pc)) {
+      stopComputerRun(); highlightCpuActivity(); setStatus(`Breakpoint hit at PC ${pc}.`);
+      return false;
+    }
+    computerInstructionStep({ announce: false });
+    if (context.cpu.outputs.halted === 1) { stopComputerRun(); setStatus('Computer halted.'); return false; }
+    return true;
+  }
+  function runComputerAtMaximumSpeed() {
+    // Yield to the browser after a bounded batch so Maximum remains responsive.
+    for (let instruction = 0; instruction < 25; instruction += 1) if (!runComputerInstruction()) return;
+    computerRunTimer = setTimeout(runComputerAtMaximumSpeed, 0);
+  }
+  function startComputerRun({ announce = true } = {}) {
+    if (!computerConsoleContext()) return setStatus('Open Runnable CPU console before running the computer.', true);
+    const delay = cpuRunDelay();
+    if (delay === null) computerRunTimer = setTimeout(runComputerAtMaximumSpeed, 0);
+    else computerRunTimer = setInterval(runComputerInstruction, delay);
+    updateComputerControls();
+    if (announce) setStatus(`Computer running at ${cpuRunSpeedLabel()}.`);
+  }
   function toggleComputerRun() {
     if (computerRunTimer) { stopComputerRun(); setStatus('Computer run stopped.'); return; }
-    if (!computerConsoleContext()) return setStatus('Open Runnable CPU console before running the computer.', true);
-    computerRunTimer = setInterval(() => {
-      const context = computerConsoleContext();
-      if (!context || context.cpu.outputs.halted === 1) { stopComputerRun(); if (context?.cpu.outputs.halted === 1) setStatus('Computer halted.'); return; }
-      const pc = cpuPcAddress(context.cpu);
-      if (pc !== null && cpuDebug.breakpoints.has(pc)) { stopComputerRun(); highlightCpuActivity(); setStatus(`Breakpoint hit at PC ${pc}.`); return; }
-      computerInstructionStep();
-    }, 180);
-    updateComputerControls(); setStatus('Computer running instruction-by-instruction.');
+    startComputerRun();
+  }
+  function changeComputerSpeed() {
+    if (!computerRunTimer) return setStatus(`CPU speed set to ${cpuRunSpeedLabel()}.`);
+    stopComputerRun(); startComputerRun({ announce: false });
+    setStatus(`CPU speed changed to ${cpuRunSpeedLabel()}.`);
   }
 
   function startGeneratorTimer() {
@@ -4527,6 +4556,7 @@
     computerRunBtn.addEventListener('click', toggleComputerRun);
     computerInstructionBtn.addEventListener('click', computerInstructionStep);
     computerClockBtn.addEventListener('click', () => computerClockStep());
+    computerSpeedSelect.addEventListener('change', changeComputerSpeed);
     loadExampleProgramBtn.addEventListener('click', () => loadProgram(computerConsoleContext()?.io ? ioExampleProgram() : exampleProgram()));
     cpuPropagationStepBtn.addEventListener('click', () => { setCpuDebugHighlights(true, { announce: false }); stepOnce(); highlightCpuActivity(); });
     cpuDebugHighlightsBtn.addEventListener('click', () => setCpuDebugHighlights(!cpuDebug.highlightsEnabled));
