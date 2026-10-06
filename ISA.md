@@ -117,7 +117,7 @@ HALT
 
 ## Interactive I/O console map
 
-`Interactive CPU I/O console (729×6)` adds a transparent memory-mapped adapter. Normal addresses still access RAM. Once loading is complete, these addresses access the existing ternary joystick and Pixel Display 3×3:
+`Interactive CPU I/O console (729×6)` adds a transparent memory-mapped adapter. Normal addresses still access RAM. Once loading is complete, the listed addresses access the existing ternary joystick and Pixel Display 3×3 **only during CPU execute phase**; instruction fetch always reads RAM, including at `+4`.
 
 | Address | Operation | Word |
 | --- | --- | --- |

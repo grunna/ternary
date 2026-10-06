@@ -36,7 +36,7 @@
     { label: 'State & timing', types: ['latch3', 'register3', 'register-bank3', 'register-bank3x6', 'register-file3x6', 'program-counter6', 'instruction-register6', 'instruction-control6', 'cpu-memory-cycle6', 'cpu-control-flow6', 'cpu6', 'cpu-io-adapter3x3', 'memory3x1', 'memory3x6', 'memory9x6', 'memory27x6', 'memory81x6', 'storage-node3', 'clock-phase3'] },
   ];
   const primitiveExperiment = { activeId: 'all', customTypes: new Set(EXPERIMENTAL_PRIMITIVES) };
-  const PROJECT_FORMAT_VERSION = 6;
+  const PROJECT_FORMAT_VERSION = 7;
   const COMPONENT_PACKAGE_FORMAT_VERSION = 1;
   let currentProjectId = null;
   let currentProjectName = 'Project 1';
@@ -1810,6 +1810,22 @@
     }
     if (!project.testSuites) project.testSuites = [];
     if (!project.projectName) project.projectName = 'Imported project';
+    // Format 7 adds the CPU phase port to the I/O adapter. Older saved CPU
+    // consoles must receive that wire too; otherwise their adapter would see
+    // an unknown phase and intentionally leave every transaction in RAM mode.
+    const wireCpuPhaseToIoAdapter = (circuitData) => {
+      if (!circuitData || !Array.isArray(circuitData.components) || !Array.isArray(circuitData.wires)) return;
+      const cpu = circuitData.components.find((component) => component.type === 'cpu6');
+      if (!cpu) return;
+      const adapters = circuitData.components.filter((component) => component.type === 'cpu-io-adapter3x3');
+      let nextWire = Math.max(0, ...circuitData.wires.map((wire) => Number(String(wire.id || '').replace(/^w/, '')) || 0)) + 1;
+      adapters.forEach((adapter) => {
+        const wired = circuitData.wires.some((wire) => wire.to?.componentId === adapter.id && wire.to?.port === 'phase');
+        if (!wired) circuitData.wires.push({ id: `w${nextWire++}`, from: { componentId: cpu.id, port: 'phase' }, to: { componentId: adapter.id, port: 'phase' }, value: 0, label: '' });
+      });
+    };
+    wireCpuPhaseToIoAdapter(project.rootCircuit);
+    project.customComponents.forEach((meta) => wireCpuPhaseToIoAdapter(meta?.circuit));
     project.formatVersion = PROJECT_FORMAT_VERSION;
     project.appVersion = PROJECT_FORMAT_VERSION;
     return project;
@@ -2526,7 +2542,7 @@
     lanes.forEach((lane, index) => { mux(`data ${lane}`, `data${lane}`, `memoryWrite${lane}`, `dataIn${lane}`, -60 + index * 55); rootCircuit.connect((io || memory).id, `dataOut${lane}`, cpu.id, `memoryData${lane}`); rootCircuit.connect(cpu.id, `pc${lane}`, pc.id, `t${lane}`); rootCircuit.connect(cpu.id, `rNeg${lane}`, rNeg.id, `t${lane}`); rootCircuit.connect(cpu.id, `rZero${lane}`, rZero.id, `t${lane}`); rootCircuit.connect(cpu.id, `rPos${lane}`, rPos.id, `t${lane}`); rootCircuit.connect(cpu.id, `instruction${lane}`, instruction.id, `t${lane}`); });
     if (io) {
       lanes.forEach((lane) => { rootCircuit.connect(io.id, `ramAddress${lane}`, memory.id, `address${lane}`); rootCircuit.connect(io.id, `ramDataIn${lane}`, memory.id, `dataIn${lane}`); rootCircuit.connect(memory.id, `dataOut${lane}`, io.id, `ramData${lane}`); });
-      rootCircuit.connect(io.id, 'ramAction', memory.id, 'action'); rootCircuit.connect(clock.id, 'out', io.id, 'clock'); rootCircuit.connect(reset.id, 'out', io.id, 'reset'); rootCircuit.connect(loader.id, 'done', io.id, 'ioEnable');
+      rootCircuit.connect(io.id, 'ramAction', memory.id, 'action'); rootCircuit.connect(cpu.id, 'phase', io.id, 'phase'); rootCircuit.connect(clock.id, 'out', io.id, 'clock'); rootCircuit.connect(reset.id, 'out', io.id, 'reset'); rootCircuit.connect(loader.id, 'done', io.id, 'ioEnable');
       rootCircuit.connect(joystick.id, 'x', io.id, 'joystickX'); rootCircuit.connect(joystick.id, 'y', io.id, 'joystickY');
       rootCircuit.connect(io.id, 'displayX', display.id, 'x'); rootCircuit.connect(io.id, 'displayY', display.id, 'y'); rootCircuit.connect(io.id, 'displayColor', display.id, 'color'); rootCircuit.connect(io.id, 'displayClearBeforeWrite', display.id, 'clearBeforeWrite'); rootCircuit.connect(io.id, 'displayClock', display.id, 'clock'); rootCircuit.connect(io.id, 'displayReset', display.id, 'reset');
     }
@@ -4165,13 +4181,6 @@
     { address: 9, word: [...CPU_OPCODES.LIT, 1, 0, 0], label: 'LIT R+, 0, 0' },
     { address: 10, word: [...CPU_OPCODES.JUMP, 0, 1, 0], label: 'JUMP R+' },
   ] });
-  const exampleProgramSource = `# A six-instruction arithmetic and memory program
-LIT R-, -, -
-LIT R0, 0, +
-ADD R+, R0, R0
-STORE [R-], R+
-LOAD R0, [R-]
-HALT`;
   function sourceTrit(token, lineNumber) {
     const value = String(token || '').trim().replaceAll('−', '-');
     if (value === '-' || value === '-1') return -1;
@@ -4215,13 +4224,44 @@ HALT`;
       words.push({ address, word, label: rawLine.trim() });
       address += 1;
     });
-    return normalizeProgram({ format: PROGRAM_FORMAT, version: 1, name, description, words });
+    return { ...normalizeProgram({ format: PROGRAM_FORMAT, version: 1, name, description, words }), source: String(source || '') };
+  }
+  function formatProgramTrit(value) { return trit(value) === -1 ? '−' : trit(value) === 1 ? '+' : '0'; }
+  function formatProgramRegister(value) { return trit(value) === -1 ? 'R−' : trit(value) === 1 ? 'R+' : 'R0'; }
+  function formatProgramWord(word) {
+    const values = Array.isArray(word) ? word.map(trit) : [];
+    const decoded = window.TernaryCore.decodeInstruction6(values);
+    if (!decoded.valid) return `.WORD ${values.map(formatProgramTrit).join(' ')}`;
+    const { mnemonic, rd, ra, rb } = decoded;
+    if ((mnemonic === 'HALT' || mnemonic === 'NOP') && rd === 0 && ra === 0 && rb === 0) return mnemonic;
+    if (mnemonic === 'MOV' && rb === 0) return `MOV ${formatProgramRegister(rd)}, ${formatProgramRegister(ra)}`;
+    if ((mnemonic === 'ADD' || mnemonic === 'SUB') && [rd, ra, rb].every((value) => value === -1 || value === 0 || value === 1)) return `${mnemonic} ${formatProgramRegister(rd)}, ${formatProgramRegister(ra)}, ${formatProgramRegister(rb)}`;
+    if (mnemonic === 'LOAD' && rb === 0) return `LOAD ${formatProgramRegister(rd)}, [${formatProgramRegister(ra)}]`;
+    if (mnemonic === 'STORE' && rd === 0) return `STORE [${formatProgramRegister(ra)}], ${formatProgramRegister(rb)}`;
+    if (mnemonic === 'JUMP' && rd === 0 && rb === 0) return `JUMP ${formatProgramRegister(ra)}`;
+    if (mnemonic === 'BRZ' && rd === 0) return `BRZ ${formatProgramRegister(ra)}, ${formatProgramRegister(rb)}`;
+    if (mnemonic === 'LIT') return `LIT ${formatProgramRegister(rd)}, ${formatProgramTrit(ra)}, ${formatProgramTrit(rb)}`;
+    return `.WORD ${values.map(formatProgramTrit).join(' ')}`;
+  }
+  function formatProgramSource(program) {
+    const words = [...program.words].sort((left, right) => left.address - right.address);
+    let previousAddress = null;
+    return words.map((entry) => {
+      const prefix = previousAddress === null ? (entry.address === 0 ? '' : `${entry.address}: `) : entry.address === previousAddress + 1 ? '' : `${entry.address}: `;
+      previousAddress = entry.address;
+      return `${prefix}${formatProgramWord(entry.word)}`;
+    }).join('\n');
   }
   function openProgramEditor() {
-    if (!computerConsoleContext()) return setStatus('Open Runnable CPU console before writing a program.', true);
-    programEditorName.value = 'My ternary program';
-    programEditorDescription.value = '';
-    programEditorSource.value = exampleProgramSource;
+    const context = computerConsoleContext();
+    if (!context) return setStatus('Open Runnable CPU console before writing a program.', true);
+    let program;
+    try {
+      program = normalizeProgram({ format: PROGRAM_FORMAT, version: 1, name: context.loader.state.programName || 'Untitled program', description: context.loader.state.programDescription || '', source: context.loader.state.programSource || '', words: context.loader.state.program || [] });
+    } catch (_) { program = exampleProgram(); }
+    programEditorName.value = program.name;
+    programEditorDescription.value = program.description;
+    programEditorSource.value = program.source || formatProgramSource(program);
     programEditorDialog.showModal();
     programEditorSource.focus();
   }
@@ -4236,13 +4276,13 @@ HALT`;
     if (!data || data.format !== PROGRAM_FORMAT || Number(data.version) !== 1 || !Array.isArray(data.words)) throw new Error('Unsupported program file.');
     const words = data.words.map((entry) => ({ address: Number(entry.address), word: Array.isArray(entry.word) ? entry.word.map(trit) : [], label: String(entry.label || '') })).filter((entry) => Number.isInteger(entry.address) && entry.address >= -364 && entry.address <= 364 && entry.word.length === 6 && entry.word.every((value) => value === -1 || value === 0 || value === 1));
     if (!words.length || new Set(words.map((entry) => entry.address)).size !== words.length) throw new Error('A program needs unique addresses from −364 through +364 and six known trits per word.');
-    return { format: PROGRAM_FORMAT, version: 1, name: String(data.name || 'Untitled program'), description: String(data.description || ''), words: words.sort((a, b) => a.address - b.address) };
+    return { format: PROGRAM_FORMAT, version: 1, name: String(data.name || 'Untitled program'), description: String(data.description || ''), source: typeof data.source === 'string' ? data.source : '', words: words.sort((a, b) => a.address - b.address) };
   }
   function loadProgram(data) {
     const context = computerConsoleContext();
     if (!context) return setStatus('Open Runnable CPU console before loading a program.', true);
     const program = normalizeProgram(data);
-    stopComputerRun(); setCpuDebugHighlights(false, { announce: false }); rootCircuit.setState(context.loader.id, { program: program.words, programName: program.name, index: 0, active: true }); rootCircuit.simulate();
+    stopComputerRun(); setCpuDebugHighlights(false, { announce: false }); rootCircuit.setState(context.loader.id, { program: program.words, programName: program.name, programDescription: program.description, programSource: program.source || formatProgramSource(program), index: 0, active: true }); rootCircuit.simulate();
     for (let step = 0; step < program.words.length * 2; step += 1) computerClockStep({ announce: false });
     const memoryLabel = context.memory?.state?.label || 'program / data memory';
     setStatus(`Loaded “${program.name}” through ${memoryLabel}. CPU is reset at PC 0 and has not executed; inspect the memory list, then Run computer or Instruction step.`);
@@ -4253,7 +4293,7 @@ HALT`;
   }
   function exportProgram() {
     const context = computerConsoleContext(); if (!context) return setStatus('Open Runnable CPU console before exporting a program.', true);
-    const program = normalizeProgram({ ...exampleProgram(), name: context.loader.state.programName || 'Loaded program', words: context.loader.state.program || [] });
+    const program = normalizeProgram({ ...exampleProgram(), name: context.loader.state.programName || 'Loaded program', description: context.loader.state.programDescription || '', source: context.loader.state.programSource || '', words: context.loader.state.program || [] });
     downloadJson(`${slug(program.name) || 'ternary-program'}.ternary-program.json`, program); setStatus(`Exported “${program.name}”.`);
   }
 

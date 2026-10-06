@@ -883,14 +883,35 @@
   registry.register({ type: 'cpu-memory-port27', label: 'CPU / Memory 27×6 port', category: 'control', inputs: ['pc2', 'pc1', 'pc0', 'ra2', 'ra1', 'ra0', 'phase', 'executeAction', ...wordLanes.map((lane) => `dataIn${lane}`)], outputs: ['address2', 'address1', 'address0', 'action', ...wordLanes.map((lane) => `dataOut${lane}`)], evaluate(c) { const phase = trit(c.inputs.phase), prefix = phase === 1 ? 'ra' : phase === 0 || phase === -1 ? 'pc' : null; const action = phase === 0 ? -1 : phase === 1 ? trit(c.inputs.executeAction) : 0; const data = Object.fromEntries(wordLanes.map((lane) => [`dataOut${lane}`, trit(c.inputs[`dataIn${lane}`])])); return { ...Object.fromEntries(['2', '1', '0'].map((lane) => [`address${lane}`, prefix ? trit(c.inputs[`${prefix}${lane}`]) : UNKNOWN])), action, ...data }; } });
   registry.register({
     type: 'cpu-io-adapter3x3', label: 'CPU I/O adapter — joystick + Pixel Display 3×3', category: 'computer', breaksCombinationalPath: true,
-    inputs: [...wordLanes.map((lane) => `address${lane}`), 'action', ...wordLanes.map((lane) => `dataIn${lane}`), ...wordLanes.map((lane) => `ramData${lane}`), 'clock', 'reset', 'ioEnable', 'joystickX', 'joystickY'],
+    inputs: [...wordLanes.map((lane) => `address${lane}`), 'phase', 'action', ...wordLanes.map((lane) => `dataIn${lane}`), ...wordLanes.map((lane) => `ramData${lane}`), 'clock', 'reset', 'ioEnable', 'joystickX', 'joystickY'],
     outputs: [...wordLanes.map((lane) => `ramAddress${lane}`), 'ramAction', ...wordLanes.map((lane) => `ramDataIn${lane}`), ...wordLanes.map((lane) => `dataOut${lane}`), 'displayX', 'displayY', 'displayColor', 'displayClearBeforeWrite', 'displayClock', 'displayReset'],
-    evaluate(c) {
+    // A STORE becomes visible after the CPU has committed its fetch state,
+    // which can happen while the shared clock is already high.  Gating the
+    // display clock directly with `writeDisplay ? clock : 0` therefore makes
+    // a false rising edge at that point, followed by the real execute edge.
+    // Keep a latched display-clock level instead: only a real 0 → +1 CPU
+    // transition may raise it, and the following CPU low phase clears it.
+    defaultState: { previousClock: 0, displayClockHigh: 0 },
+    evaluate(c, { circuit }) {
       const address = balancedWordValue(wordLanes.map((lane) => trit(c.inputs[`address${lane}`])));
-      const action = trit(c.inputs.action), enabled = trit(c.inputs.ioEnable) === 1;
-      const isIo = enabled && (address === -4 || address === -3 || address === 4);
+      const phase = trit(c.inputs.phase), action = trit(c.inputs.action), enabled = trit(c.inputs.ioEnable) === 1;
+      // FETCH uses the same read action as LOAD.  Map I/O only in execute
+      // phase, otherwise instruction address +4 is mistaken for the display
+      // register and the second STORE in a small program is never fetched.
+      const isIo = enabled && phase === 1 && (address === -4 || address === -3 || address === 4);
       const read = isIo && action === -1;
       const writeDisplay = isIo && address === 4 && action === 1;
+      const clock = trit(c.inputs.clock), staged = circuit.getStagedState(c.id);
+      let displayClock = trit(c.state.displayClockHigh);
+      if (clock === 0 || clock === 1) {
+        const previousClock = trit(staged.previousClock);
+        const patch = { previousClock: clock };
+        if (previousClock === 0 && clock === 1) patch.displayClockHigh = writeDisplay ? 1 : 0;
+        else if (clock === 0) patch.displayClockHigh = 0;
+        circuit.stageStateCommit(c.id, patch);
+      } else {
+        displayClock = 0;
+      }
       const joystickX = trit(c.inputs.joystickX), joystickY = trit(c.inputs.joystickY);
       const ioData = address === -4 ? [0, 0, 0, joystickX, 0, 0] : address === -3 ? [0, 0, 0, 0, joystickY, 0] : Array(6).fill(UNKNOWN);
       const data = read ? ioData : wordLanes.map((lane) => trit(c.inputs[`ramData${lane}`]));
@@ -900,8 +921,11 @@
         ramAction: isIo ? 0 : action,
         ...Object.fromEntries(wordLanes.map((lane, index) => [`ramDataIn${lane}`, writeWord[index]])),
         ...Object.fromEntries(wordLanes.map((lane, index) => [`dataOut${lane}`, data[index]])),
-        displayX: writeWord[3], displayY: writeWord[4], displayColor: writeWord[5], displayClearBeforeWrite: writeDisplay ? 1 : 0,
-        displayClock: writeDisplay ? trit(c.inputs.clock) : 0,
+        // Keep clear asserted for the complete emitted display-clock pulse.
+        // `writeDisplay` can fall when the CPU advances phase while that pulse
+        // is still high; clearing from the pulse preserves the transaction.
+        displayX: writeWord[3], displayY: writeWord[4], displayColor: writeWord[5], displayClearBeforeWrite: displayClock,
+        displayClock,
         displayReset: trit(c.inputs.reset),
       };
     },
@@ -1012,7 +1036,7 @@
   registry.register({
     type: 'cpu-program-loader6', label: 'CPU example-program loader', category: 'computer', breaksCombinationalPath: true,
     inputs: ['clock'], outputs: [...wordLanes.map((lane) => `address${lane}`), 'action', ...wordLanes.map((lane) => `data${lane}`), 'done', 'cpuReset'],
-    defaultState: { index: 0, previousClock: 0, active: false, program: [{ address: 0, word: [...CPU_OPCODES.LIT, -1, -1, -1] }, { address: 1, word: [...CPU_OPCODES.LIT, 0, 0, 1] }, { address: 2, word: [...CPU_OPCODES.ADD, 1, 0, 0] }, { address: 3, word: [...CPU_OPCODES.STORE, 0, -1, 1] }, { address: 4, word: [...CPU_OPCODES.LOAD, 0, -1, 0] }, { address: 5, word: [...CPU_OPCODES.HALT, 0, 0, 0] }] },
+    defaultState: { index: 0, previousClock: 0, active: false, programName: '18C arithmetic and memory', programDescription: '', programSource: '', program: [{ address: 0, word: [...CPU_OPCODES.LIT, -1, -1, -1] }, { address: 1, word: [...CPU_OPCODES.LIT, 0, 0, 1] }, { address: 2, word: [...CPU_OPCODES.ADD, 1, 0, 0] }, { address: 3, word: [...CPU_OPCODES.STORE, 0, -1, 1] }, { address: 4, word: [...CPU_OPCODES.LOAD, 0, -1, 0] }, { address: 5, word: [...CPU_OPCODES.HALT, 0, 0, 0] }] },
     evaluate(c, { circuit }) {
       const program = (Array.isArray(c.state.program) ? c.state.program : []).filter((entry) => Number.isInteger(Number(entry?.address)) && Number(entry.address) >= -364 && Number(entry.address) <= 364 && Array.isArray(entry.word) && entry.word.length === 6 && entry.word.every(isKnownTrit));
       const index = Math.max(0, Number(c.state.index) || 0), active = c.state.active === true && index < program.length;
@@ -1136,7 +1160,12 @@
     cost: { logical: { nodes: 0, depth: 0 } },
     evaluate(c, { circuit }) {
       const clock = trit(c.inputs.clock), staged = circuit.getStagedState(c.id);
-      const previousClock = trit(staged.previousClock);
+      // State commits happen after propagation settles.  Use the committed
+      // level for edge detection, so a later x/y/color wire update during the
+      // same clock-high propagation pass can replace an earlier provisional
+      // write.  Using `staged.previousClock` consumed the edge too early and
+      // made a CPU STORE sample a stale packed display word.
+      const previousClock = trit(c.state.previousClock);
       const knownClock = clock === 0 || clock === 1;
       const patch = { previousClock: clock };
       if (!knownClock) {
@@ -1281,7 +1310,7 @@
     'word-zero6': { mode: 'accelerated-equivalent', status: 'architectural control contract', summary: 'A declared word boundary reports +1 only for a fully known all-zero tryte.', layers: ['Six known ternary lanes', 'All-zero decision'] },
     'cpu-address27': { mode: 'accelerated-equivalent', status: 'architectural control contract', summary: 'A declared address selector presents PC low trits during fetch and register-A low trits during execute.', layers: ['Fetch PC address', 'Execute register address', 'Three-trit Memory 27×6 address'] },
     'cpu-memory-port27': { mode: 'accelerated-equivalent', status: 'architectural control contract', summary: 'A declared CPU-facing port multiplexes fetch reads and execute data accesses onto the public Memory 27×6 address/action/data contract.', layers: ['Fetch action −1', 'Execute read/idle/write action', 'Unmodified six-trit write data'] },
-    'cpu-io-adapter3x3': { mode: 'external-adapter', status: 'memory-mapped I/O boundary', summary: 'Routes ordinary CPU memory transactions either to RAM or to documented joystick/display registers. It does not add CPU state or bypass the public memory action/address/data contract.', layers: ['−4 joystick X read', '−3 joystick Y read', '+4 packed Pixel Display 3×3 write', 'RAM pass-through for every other transaction'], structuralImplementation: 'io-contract-cpu-io-adapter3x3-v1' },
+    'cpu-io-adapter3x3': { mode: 'external-adapter', status: 'memory-mapped I/O boundary', summary: 'Routes execute-phase CPU data transactions either to RAM or to documented joystick/display registers. Instruction fetch always remains a RAM read, including at mapped device addresses.', layers: ['Execute-phase −4 joystick X read', 'Execute-phase −3 joystick Y read', 'Execute-phase +4 packed Pixel Display 3×3 write', 'RAM pass-through for every fetch and every other transaction'], structuralImplementation: 'io-contract-cpu-io-adapter3x3-v1' },
     'cpu-memory-cycle6': { mode: 'accelerated-equivalent', status: 'architectural timing contract', summary: 'Makes the zero-cycle memory-read and synchronous write schedule explicit for fetch, LOAD and STORE.', layers: ['Fetch read and instruction-register sample', 'Execute LOAD read and register-file sample', 'Execute STORE edge write'] },
     'cpu-control-flow6': { mode: 'accelerated-equivalent', status: 'architectural control contract', summary: 'Uses the proven 0 / +1 equality result to select normal PC increment, a conditional BRZ target or an unconditional JUMP target.', layers: ['Equal comparison result', 'Three-trit address sign extension', 'PC increment/load controls'] },
     cpu6: { mode: 'accelerated-equivalent', status: 'documented architectural machine reference', summary: 'A complete six-trit fetch/execute CPU state boundary. Its public Memory 27×6 port, PC, register and instruction outputs make every architectural transition inspectable.', layers: ['Program counter and fetch/execute phase', 'Instruction decode and six-trit register file', 'ALU/write-back, branch control and Memory 27×6 port'], structuralImplementation: 'structural-cpu6-v1' },
