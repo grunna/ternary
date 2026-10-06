@@ -18,7 +18,7 @@ Op2 Op1 Op0 Rd Ra Rb
 | `0` | `R0` |
 | `+` | `R+` |
 
-An instruction completes in fetch then execute. Fetch reads the instruction word at PC; execute performs its operation and normally increments PC. Reads from the attached memory are combinational within their phase, while writes commit on the execute clock edge.
+An instruction completes in fetch then execute. Fetch reads the instruction word at PC; execute performs its operation and normally increments PC. `LITW` additionally fetches and consumes one following literal tryte before continuing. Reads from the attached memory are combinational within their phase, while writes commit on the execute clock edge.
 
 ## Opcodes
 
@@ -34,8 +34,9 @@ An instruction completes in fetch then execute. Fetch reads the instruction word
 | `− + 0` | `BRZ Ra, Rb` | If `Ra` is exactly zero, load PC from the full six-trit value in `Rb`; otherwise continue normally. |
 | `− + +` | `NOP` | No data operation; advance PC normally. |
 | `+ − −` | `LIT Rd, Imm1, Imm0` | Write the two-trit balanced literal `Imm1 Imm0` (`−4 … +4`) to `Rd`. `Ra` and `Rb` are literal digits, not register addresses. |
+| `+ − 0` | `LITW Rd` + next tryte | Write the complete following six-trit tryte to `Rd`. The header uses `Ra=0`, `Rb=0`; the following tryte is literal data, never an instruction. |
 
-`+ + +` is reserved as the future `EXT` opcode. It is currently a safe no-op in the opening CPU because extension fetch/decode has not been implemented yet. The other 16 unassigned opcode values remain reserved for future Base ISA instructions. A reserved or malformed instruction is a safe no-op in the opening profile: it does not write registers, memory or PC.
+`+ + +` is reserved as the future `EXT` opcode. It is currently a safe no-op in the opening CPU because extension fetch/decode has not been implemented yet. The other 15 unassigned opcode values remain reserved for future Base ISA instructions. A reserved or malformed instruction is a safe no-op in the opening profile: it does not write registers, memory or PC.
 
 ## Base ISA and `EXT` direction
 
@@ -111,6 +112,13 @@ LIT R-, -, -
 LIT R0, 0, +
 2: ADD R+, R0, R0
 HALT
+```
+
+Use `LITW` when the value does not fit in the short two-trit literal. Its next source line must be a raw six-trit word:
+
+```text
+LITW R0
+.WORD + 0 − + + 0
 ```
 
 `#` and `;` start comments. `R−`, `R0` and `R+` name registers (plain `R-` is accepted too). Use `.ORG 20` to continue at a different address, or `.WORD − 0 + 0 0 0` to place ordinary data. **Validate & load** loads through the public memory port and leaves the CPU stopped at PC `0`.

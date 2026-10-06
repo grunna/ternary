@@ -10,5 +10,6 @@ assert.deepStrictEqual(control.outputs, { rd: 1, ra: -1, rb: 0, instructionLoad:
 set({ ...instruction(CPU_OPCODES.LOAD, -1, 1, 0), phase: 1 }); assert.strictEqual(control.outputs.memoryAction, -1); assert.strictEqual(control.outputs.writeBackSelect, -1);
 set({ ...instruction(CPU_OPCODES.BRZ, 0, -1, 1), phase: 1, branchZero: 1 }); assert.strictEqual(control.outputs.pcLoad, 1);
 set({ ...instruction(CPU_OPCODES.LIT, -1, 1, -1), phase: 1 }); assert.strictEqual(control.outputs.immediate, 1);
+set({ ...instruction(CPU_OPCODES.LITW, -1, 0, 0), phase: 1 }); assert.strictEqual(control.outputs.registerWrite, 0); assert.strictEqual(control.outputs.memoryAction, 0);
 set({ ...instruction(CPU_OPCODES.ADD), phase: 0 }); assert.strictEqual(control.outputs.instructionLoad, 1); assert.strictEqual(control.outputs.registerWrite, 0);
 console.log('Instruction-control contract passed: inspectable fetch/execute controls map every instruction field to packed datapath, memory and PC signals.');

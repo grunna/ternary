@@ -4221,6 +4221,7 @@
       else if (mnemonic === 'JUMP') { requireArgs(1); word = [...CPU_OPCODES.JUMP, 0, sourceRegister(tokens[0], lineNumber), 0]; }
       else if (mnemonic === 'BRZ') { requireArgs(2); word = [...CPU_OPCODES.BRZ, 0, sourceRegister(tokens[0], lineNumber), sourceRegister(tokens[1], lineNumber)]; }
       else if (mnemonic === 'LIT') { requireArgs(3); word = [...CPU_OPCODES.LIT, sourceRegister(tokens[0], lineNumber), sourceTrit(tokens[1], lineNumber), sourceTrit(tokens[2], lineNumber)]; }
+      else if (mnemonic === 'LITW') { requireArgs(1); word = [...CPU_OPCODES.LITW, sourceRegister(tokens[0], lineNumber), 0, 0]; }
       else throw new Error(`Line ${lineNumber}: unknown instruction “${mnemonic}”.`);
       words.push({ address, word, label: rawLine.trim() });
       address += 1;
@@ -4242,15 +4243,20 @@
     if (mnemonic === 'JUMP' && rd === 0 && rb === 0) return `JUMP ${formatProgramRegister(ra)}`;
     if (mnemonic === 'BRZ' && rd === 0) return `BRZ ${formatProgramRegister(ra)}, ${formatProgramRegister(rb)}`;
     if (mnemonic === 'LIT') return `LIT ${formatProgramRegister(rd)}, ${formatProgramTrit(ra)}, ${formatProgramTrit(rb)}`;
+    if (mnemonic === 'LITW' && ra === 0 && rb === 0) return `LITW ${formatProgramRegister(rd)}`;
     return `.WORD ${values.map(formatProgramTrit).join(' ')}`;
   }
   function formatProgramSource(program) {
     const words = [...program.words].sort((left, right) => left.address - right.address);
     let previousAddress = null;
+    let literalWordNext = false;
     return words.map((entry) => {
       const prefix = previousAddress === null ? (entry.address === 0 ? '' : `${entry.address}: `) : entry.address === previousAddress + 1 ? '' : `${entry.address}: `;
       previousAddress = entry.address;
-      return `${prefix}${formatProgramWord(entry.word)}`;
+      const decoded = window.TernaryCore.decodeInstruction6(entry.word);
+      const text = literalWordNext ? `.WORD ${entry.word.map(formatProgramTrit).join(' ')}` : formatProgramWord(entry.word);
+      literalWordNext = !literalWordNext && decoded.mnemonic === 'LITW' && decoded.ra === 0 && decoded.rb === 0;
+      return `${prefix}${text}`;
     }).join('\n');
   }
   function openProgramEditor() {

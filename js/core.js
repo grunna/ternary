@@ -21,7 +21,7 @@
     return remaining === 0 ? digits : null;
   };
   const balancedWordValue = (values) => values.every(isKnownTrit) ? values.reduce((total, value) => total * 3 + trit(value), 0) : null;
-  const CPU_OPCODES = Object.freeze({ HALT: [-1, -1, -1], MOV: [-1, -1, 0], ADD: [-1, -1, 1], SUB: [-1, 0, -1], LOAD: [-1, 0, 0], STORE: [-1, 0, 1], JUMP: [-1, 1, -1], BRZ: [-1, 1, 0], NOP: [-1, 1, 1], LIT: [1, -1, -1] });
+  const CPU_OPCODES = Object.freeze({ HALT: [-1, -1, -1], MOV: [-1, -1, 0], ADD: [-1, -1, 1], SUB: [-1, 0, -1], LOAD: [-1, 0, 0], STORE: [-1, 0, 1], JUMP: [-1, 1, -1], BRZ: [-1, 1, 0], NOP: [-1, 1, 1], LIT: [1, -1, -1], LITW: [1, -1, 0] });
   const opcodeKey = (values) => values.map(trit).join(',');
   const decodeInstruction6 = (values) => {
     const word = Array.isArray(values) ? values.map(trit) : [];
@@ -39,6 +39,7 @@
     if (mnemonic === 'JUMP') return { ...base, mnemonic, pcLoad: 1 };
     if (mnemonic === 'BRZ') return { ...base, mnemonic, branchIfZero: 1 };
     if (mnemonic === 'LIT') return { ...base, mnemonic, registerWrite: 1, writeBackSelect: -1, immediate: 1 };
+    if (mnemonic === 'LITW') return { ...base, mnemonic, literalWord: 1 };
     return { ...base, mnemonic };
   };
   const CPU_PHASES = Object.freeze({ FETCH: 'fetch', EXECUTE: 'execute', HALTED: 'halted' });
@@ -976,18 +977,21 @@
     type: 'cpu6', label: 'Opening ternary CPU — 6-trit', category: 'computer', breaksCombinationalPath: true,
     inputs: [...wordLanes.map((lane) => `memoryData${lane}`), 'clock', 'reset'],
     outputs: [...wordLanes.map((lane) => `address${lane}`), 'memoryAction', ...wordLanes.map((lane) => `memoryWrite${lane}`), ...wordLanes.map((lane) => `pc${lane}`), ...wordLanes.flatMap((lane) => [`rNeg${lane}`, `rZero${lane}`, `rPos${lane}`]), ...wordLanes.map((lane) => `instruction${lane}`), 'phase', 'halted'],
-    defaultState: { pc: Array(6).fill(UNKNOWN), registers: Array.from({ length: 3 }, () => Array(6).fill(UNKNOWN)), instruction: Array(6).fill(UNKNOWN), phase: 0, previousClock: 0 },
+    defaultState: { pc: Array(6).fill(UNKNOWN), registers: Array.from({ length: 3 }, () => Array(6).fill(UNKNOWN)), instruction: Array(6).fill(UNKNOWN), phase: 0, previousClock: 0, literalPending: false, literalDestination: 0 },
     evaluate(c, { circuit }) {
       const state = circuit.getStagedState(c.id);
       const pc = Array.isArray(c.state.pc) ? c.state.pc.map(trit) : Array(6).fill(UNKNOWN);
       const registers = Array.isArray(c.state.registers) ? c.state.registers.map((word) => Array.isArray(word) ? word.map(trit) : Array(6).fill(UNKNOWN)) : Array.from({ length: 3 }, () => Array(6).fill(UNKNOWN));
       const instruction = Array.isArray(c.state.instruction) ? c.state.instruction.map(trit) : Array(6).fill(UNKNOWN);
       const phase = trit(c.state.phase);
+      const literalPending = state.literalPending === true, literalDestination = trit(state.literalDestination);
       const decoded = decodeInstruction6(instruction);
       const index = (address) => address < 0 ? 0 : address > 0 ? 2 : 1;
       const read = (address) => isKnownTrit(address) ? (registers[index(address)] || Array(6).fill(UNKNOWN)) : Array(6).fill(UNKNOWN);
       const ra = read(decoded.ra), rb = read(decoded.rb);
-      const memoryAction = phase === 0 ? -1 : phase === 1 ? trit(decoded.memoryAction) : 0;
+      // The second LITW tryte is literal data. It must never be decoded as a
+      // LOAD/STORE/JUMP instruction while its value is being consumed.
+      const memoryAction = phase === 0 ? -1 : phase === 1 ? (literalPending ? 0 : trit(decoded.memoryAction)) : 0;
       const addressWord = phase === 0 ? pc : phase === 1 ? ra : Array(6).fill(UNKNOWN);
       const memoryData = wordLanes.map((lane) => trit(c.inputs[`memoryData${lane}`]));
       const clock = trit(c.inputs.clock), reset = trit(c.inputs.reset);
@@ -1006,10 +1010,19 @@
         const rising = trit(state.previousClock) === 0 && clock === 1;
         const patch = { previousClock: clock };
         if (rising && reset === 1) {
-          patch.pc = Array(6).fill(0); patch.registers = Array.from({ length: 3 }, () => Array(6).fill(0)); patch.instruction = Array(6).fill(0); patch.phase = 0;
+          patch.pc = Array(6).fill(0); patch.registers = Array.from({ length: 3 }, () => Array(6).fill(0)); patch.instruction = Array(6).fill(0); patch.phase = 0; patch.literalPending = false; patch.literalDestination = 0;
         } else if (rising && reset === 0 && phase === 0) {
           if (memoryData.every(isKnownTrit)) patch.instruction = memoryData;
           patch.phase = 1;
+        } else if (rising && reset === 0 && phase === 1 && literalPending) {
+          if (instruction.every(isKnownTrit) && isKnownTrit(literalDestination)) {
+            const nextRegisters = registers.map((word) => [...word]);
+            nextRegisters[index(literalDestination)] = [...instruction];
+            patch.registers = nextRegisters;
+          }
+          const nextPc = increment(pc);
+          if (nextPc?.every(isKnownTrit)) patch.pc = nextPc;
+          patch.literalPending = false; patch.phase = 0;
         } else if (rising && reset === 0 && phase === 1) {
           const nextRegisters = registers.map((word) => [...word]);
           let write = null;
@@ -1018,7 +1031,11 @@
           else if (decoded.mnemonic === 'LOAD' && memoryData.every(isKnownTrit)) write = memoryData;
           else if (decoded.mnemonic === 'LIT') write = [0, 0, 0, 0, trit(decoded.ra), trit(decoded.rb)];
           if (decoded.registerWrite === 1 && write?.every(isKnownTrit) && isKnownTrit(decoded.rd)) { nextRegisters[index(decoded.rd)] = write; patch.registers = nextRegisters; }
-          if (decoded.halt === 1) patch.phase = -1;
+          if (decoded.mnemonic === 'LITW' && decoded.ra === 0 && decoded.rb === 0) {
+            const nextPc = increment(pc);
+            if (nextPc?.every(isKnownTrit)) patch.pc = nextPc;
+            patch.literalPending = true; patch.literalDestination = decoded.rd; patch.phase = 0;
+          } else if (decoded.halt === 1) patch.phase = -1;
           else {
             const zero = ra.every((value) => value === 0);
             const target = decoded.mnemonic === 'JUMP' ? ra : decoded.mnemonic === 'BRZ' && zero ? rb : null;

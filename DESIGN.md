@@ -57,7 +57,7 @@ The opening CPU datapath uses one shared known `0 → +1` clock edge. Before tha
 
 ## Opening CPU instruction set
 
-An instruction is exactly one six-trit word, ordered most-significant first: `Op2 Op1 Op0 Rd Ra Rb`. `Rd`, `Ra` and `Rb` are one-trit register addresses (`−1 = R−`, `0 = R0`, `+1 = R+`), except that `LIT` reuses its final two fields as a small literal. Three opcode trits create 27 primary slots: the opening CPU uses ten, reserves `+++` as the canonical future `EXT` header, and leaves the other 16 unassigned Base ISA slots reserved. The opening evaluator still treats `+++` as a safe no-op until multi-tryte extension decode exists. The portable Base ISA/EXT policy is maintained in [ISA.md](ISA.md).
+An instruction is exactly one six-trit word, ordered most-significant first: `Op2 Op1 Op0 Rd Ra Rb`. `Rd`, `Ra` and `Rb` are one-trit register addresses (`−1 = R−`, `0 = R0`, `+1 = R+`), except that `LIT` reuses its final two fields as a small literal. `LITW` is a two-tryte instruction: its header names `Rd` and its following tryte is consumed as raw six-trit data. Three opcode trits create 27 primary slots: the opening CPU uses eleven, reserves `+++` as the canonical future `EXT` header, and leaves the other 15 unassigned Base ISA slots reserved. The opening evaluator still treats `+++` as a safe no-op until multi-tryte extension decode exists. The portable Base ISA/EXT policy is maintained in [ISA.md](ISA.md).
 
 | Opcode | Mnemonic | Meaning |
 | --- | --- | --- |
@@ -71,6 +71,7 @@ An instruction is exactly one six-trit word, ordered most-significant first: `Op
 | `− + 0` | `BRZ Ra, Rb` | If `Ra` is exactly zero, load PC from the full six-trit value in `Rb`; otherwise advance normally. |
 | `− + +` | `NOP` | Advance normally with no write. |
 | `+ − −` | `LIT Rd, Imm1, Imm0` | Write the two-trit balanced literal `Imm1 Imm0` (`−4 … +4`) to `Rd`. This bootstraps useful program constants after reset. |
+| `+ − 0` | `LITW Rd` + literal tryte | Write the following complete tryte to `Rd`; its literal data is never decoded as an instruction. |
 
 `Memory 27×6` is the small opening program/data store and exposes the low three CPU address lanes (`−13…+13`). `Memory 729×6` exposes all six lanes (`−364…+364`). The CPU itself uses full six-trit addresses for `LOAD`, `STORE`, `JUMP` and `BRZ`, keeping indirect addressing and all traffic on the established public memory-port contract. Fetch is zero-cycle combinational: the controller presents PC's address with memory action `−1`, lets the instruction word settle, then performs decode/execute on a later state edge. The future `EXT` form consumes a following tryte as an extension ID; wider immediates and addresses are a Phase 22 width-profile decision.
 

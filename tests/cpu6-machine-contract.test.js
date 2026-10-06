@@ -55,4 +55,20 @@ circuit.setState(cpuReset.id, { value: 1 }); pulse(cpuClock); circuit.setState(c
 for (let step = 0; step < 10; step += 1) pulse(cpuClock);
 assert.strictEqual(cpu.outputs.halted, 1, 'taken BRZ reaches its sign-preserving three-trit target');
 
+// LITW consumes its following tryte as data, loads all six trits, and skips
+// over it without letting an instruction-shaped literal cause a side effect.
+const literal = [...CPU_OPCODES.STORE, 1, -1, 1];
+writeMemory(0, instruction(CPU_OPCODES.LITW, 0));
+writeMemory(1, literal);
+writeMemory(2, instruction(CPU_OPCODES.LIT, -1, -1, -1));
+writeMemory(3, instruction(CPU_OPCODES.STORE, 0, -1, 0));
+writeMemory(4, instruction(CPU_OPCODES.HALT));
+circuit.connect(cpuClock.id, 'out', memory.id, 'clock');
+circuit.setState(cpuReset.id, { value: 1 }); pulse(cpuClock); circuit.setState(cpuReset.id, { value: 0 });
+for (let step = 0; step < 10; step += 1) pulse(cpuClock);
+assert.strictEqual(cpu.outputs.halted, 1, 'LITW program halts after consuming its literal tryte');
+assert.deepStrictEqual(lanes.map((lane) => cpu.outputs[`rZero${lane}`]), literal, 'LITW loads the complete following six-trit literal into Rd');
+assert.deepStrictEqual(memory.state.values[-4 + 13], literal, 'a LITW result can be stored through the ordinary RAM path');
+assert.deepStrictEqual(memory.state.values[13], instruction(CPU_OPCODES.LITW, 0), 'an instruction-shaped literal must not execute a STORE or overwrite the LITW header');
+
 console.log('CPU6 machine contract passed: public-memory program loading, arithmetic, LOAD/STORE, BRZ, PC and halt execute end-to-end.');
